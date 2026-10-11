@@ -1,0 +1,27 @@
+{
+  "title": "NextMail",
+  "subtitle": "Cute Temporary Email Service",
+  "description": "A separate inbox for the things you need right now. Create an address, receive your mail, and keep your personal inbox private.",
+  "features": {
+    "privacy": {
+      "title": "Privacy Protection",
+      "description": "Protect your real email address"
+    },
+    "instant": {
+      "title": "Email Sharing",
+      "description": "Share your mailbox with others"
+    },
+    "expiry": {
+      "title": "Auto Expiry",
+      "description": "Automatically expires when due"
+    },
+    "openapi": {
+      "title": "Open API",
+      "description": "Full OpenAPI interface available"
+    }
+  },
+  "actions": {
+    "enterMailbox": "Enter Mailbox",
+    "getStarted": "Get Started"
+  }
+}
