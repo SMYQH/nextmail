@@ -1,0 +1,30 @@
+{
+  "app": {
+    "name": "NextMail"
+  },
+  "clipboard": {
+    "success": "Success",
+    "error": "Error",
+    "copied": "Copied to clipboard",
+    "failed": "Failed to copy"
+  },
+  "actions": {
+    "ok": "OK",
+    "cancel": "Cancel",
+    "save": "Save",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "share": "Share",
+    "copy": "Copy",
+    "close": "Close",
+    "toggleTheme": "Toggle theme"
+  },
+  "nav": {
+    "home": "Home",
+    "login": "Login",
+    "profile": "Profile",
+    "logout": "Logout",
+    "backToMailbox": "Back to Mailbox"
+  },
+  "github": "Get Source Code"
+}

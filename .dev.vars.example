@@ -1,0 +1,7 @@
+# Local OpenNext Worker variables. Copy to .dev.vars and use a synthetic secret locally.
+AUTH_SECRET="replace-with-a-local-only-secret"
+AUTH_GITHUB_ID=""
+AUTH_GITHUB_SECRET=""
+AUTH_GOOGLE_ID=""
+AUTH_GOOGLE_SECRET=""
+WEBHOOK_ALLOWED_HOSTS=""

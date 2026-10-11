@@ -1,0 +1,30 @@
+{
+  "app": {
+    "name": "NextMail"
+  },
+  "clipboard": {
+    "success": "成功",
+    "error": "错误",
+    "copied": "已复制到剪贴板",
+    "failed": "复制失败"
+  },
+  "actions": {
+    "ok": "确定",
+    "cancel": "取消",
+    "save": "保存",
+    "delete": "删除",
+    "refresh": "刷新",
+    "share": "分享",
+    "copy": "复制",
+    "close": "关闭",
+    "toggleTheme": "切换主题"
+  },
+  "nav": {
+    "home": "首页",
+    "login": "登录",
+    "profile": "个人中心",
+    "logout": "退出登录",
+    "backToMailbox": "返回邮箱"
+  },
+  "github": "获取网站源代码"
+}
