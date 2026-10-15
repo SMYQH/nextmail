@@ -4,6 +4,7 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 71 | GET emperor claims can be CSRF-triggered. | Accepted by user. |
 | 70 | Deployment preflight rejects valid targets because of stale local Worker routes. | Resolved locally: effective deployment targets pass regression checks for fresh and existing Workers; remote deployment unverified. |
 | 69 | Cleanup tests depend on deployment-specific Wrangler configuration. | Resolved locally: isolated Wrangler fixtures pass cleanup and configured-route regression checks. |
 | 68 | GET emperor claims lose protocol headers in HTTP Worker preview. | Resolved: deployed; authenticated HTTP Worker preview and regression checks pass. |
