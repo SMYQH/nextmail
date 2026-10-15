@@ -79,3 +79,50 @@ test("refresh resets pagination when there is no overlap with the current list",
     nextCursor: "after-new-page",
   })
 })
+
+test("refresh includes new mailboxes after a pinned row and updates overlapping statistics", () => {
+  const result = mergeRefreshedMessages(
+    [{ id: "pinned", unread: 2 }, { id: "new", unread: 1 }, { id: "recent", unread: 0 }],
+    [{ id: "pinned", unread: 1 }, { id: "recent", unread: 3 }, { id: "older", unread: 0 }],
+    "first-page",
+    "loaded-tail",
+  )
+  assert.deepEqual(result.messages, [
+    { id: "pinned", unread: 2 }, { id: "new", unread: 1 },
+    { id: "recent", unread: 0 }, { id: "older", unread: 0 },
+  ])
+  assert.equal(result.nextCursor, "loaded-tail")
+})
+
+test("pinned-only overlap resets the ordinary mailbox pagination cursor", () => {
+  const pinned = { id: "catch-all", isCatchAll: true }
+  const firstPage = [pinned, ...Array.from({ length: 20 }, (_, index) => ({ id: `box-${index}` }))]
+  for (const oldMessages of [[pinned], [pinned, { id: "older" }]]) {
+    const result = mergeRefreshedMessages<Message & { isCatchAll?: boolean }>(
+      firstPage, oldMessages, "after-new-page", null, email => !email.isCatchAll,
+    )
+    assert.deepEqual(result.messages, firstPage)
+    assert.equal(result.nextCursor, "after-new-page")
+  }
+})
+
+test("ordinary mailbox overlap preserves the loaded tail alongside pinned rows", () => {
+  const pinned = { id: "catch-all", isCatchAll: true }
+  const result = mergeRefreshedMessages<Message & { isCatchAll?: boolean }>(
+    [pinned, { id: "new" }, { id: "recent" }],
+    [pinned, { id: "recent" }, { id: "older" }],
+    "first-page", "loaded-tail", email => !email.isCatchAll,
+  )
+  assert.deepEqual(result.messages.map(email => email.id), ["catch-all", "new", "recent", "older"])
+  assert.equal(result.nextCursor, "loaded-tail")
+})
+
+test("refresh removes a hidden pinned mailbox while preserving ordinary pagination", () => {
+  const result = mergeRefreshedMessages<Message & { isCatchAll?: boolean }>(
+    [{ id: "recent" }],
+    [{ id: "catch-all", isCatchAll: true }, { id: "recent" }, { id: "older" }],
+    "first-page", "loaded-tail", email => !email.isCatchAll,
+  )
+  assert.deepEqual(result.messages, [{ id: "recent" }, { id: "older" }])
+  assert.equal(result.nextCursor, "loaded-tail")
+})

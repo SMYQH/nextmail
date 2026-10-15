@@ -10,16 +10,19 @@ const { sqlite, d1 } = createTestDatabase()
 const db = drizzle(d1, { schema })
 let requestHeaders = new Headers()
 let sessionId: string | undefined
+let sessionRole = "duke"
 const config = new Map<string, string>()
 
 mock.module("../app/lib/db.ts", { namedExports: { createDb: () => db } })
 mock.module("next/headers", { namedExports: { headers: async () => requestHeaders } })
 mock.module("@opennextjs/cloudflare", { namedExports: { getCloudflareContext: () => ({ env: { DB: d1, SITE_CONFIG: { get: async (key: string) => config.get(key) ?? null, put: async (key: string, value: string) => { config.set(key, value) } } } }) } })
-mock.module("../app/lib/auth.ts", { namedExports: { GET: async () => Response.json(sessionId ? { user: { id: sessionId } } : null), auth: async () => sessionId ? { user: { id: sessionId } } : null, getUserRole: async () => "duke", checkPermission: async () => sessionId === "owner" } })
+mock.module("../app/lib/auth.ts", { namedExports: { GET: async () => Response.json(sessionId ? { user: { id: sessionId } } : null), auth: async () => sessionId ? { user: { id: sessionId } } : null, getUserRole: async () => sessionRole, checkPermission: async () => sessionId === "owner" } })
 
 const { getUserId } = await import("../app/lib/apiKey")
 const siteConfig = await import("../app/api/config/route")
 const generate = await import("../app/api/emails/generate/route")
+const rolesUsers = await import("../app/api/roles/users/route")
+const userDomains = await import("../app/api/roles/user-domains/route")
 const webhook = await import("../app/api/webhook/route")
 const webhookTest = await import("../app/api/webhook/test/route")
 const detail = await import("../app/api/emails/[id]/[messageId]/route")
@@ -28,7 +31,9 @@ const messageShares = await import("../app/api/emails/[id]/messages/[messageId]/
 const revokeMessageShare = await import("../app/api/emails/[id]/messages/[messageId]/share/[shareId]/route")
 const publicMessage = await import("../app/api/shared/message/[token]/route")
 const publicMailboxMessage = await import("../app/api/shared/[token]/messages/[messageId]/route")
+const emailService = await import("../app/api/config/email-service/route")
 const send = await import("../app/api/emails/[id]/send/route")
+const sendPermission = await import("../app/api/emails/send-permission/route")
 const apiKeysRoute = await import("../app/api/api-keys/route")
 const init = await import("../app/api/roles/init-emperor/route")
 
@@ -37,12 +42,13 @@ function reset() {
   config.set("EMAIL_SERVICE_ENABLED", "true")
   config.set("EMAIL_ROLE_LIMITS", '{"duke":2,"knight":-1}')
   config.set("RESEND_API_KEY", "test-only")
-  sqlite.exec("DELETE FROM api_keys; DELETE FROM user; DELETE FROM role")
+  sqlite.exec("DELETE FROM api_keys; DELETE FROM user_email_domain_access; DELETE FROM user; DELETE FROM role")
   sqlite.exec("INSERT INTO user(id) VALUES('owner'),('victim'); INSERT INTO role(id,name) VALUES('duke','duke'),('civilian','civilian'),('knight','knight'),('emperor','emperor'); INSERT INTO user_role(user_id,role_id) VALUES('owner','duke')")
   sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('email','owner@example.com','owner',0,?)").run(Date.now() + 60_000)
   sqlite.exec("INSERT INTO message(id,emailId,subject,content,html,received_at,sent_at,type) VALUES('message','email','Subject','secret','',100,200,'received')")
   requestHeaders = new Headers()
   sessionId = "owner"
+  sessionRole = "duke"
 }
 beforeEach(t => {
   assert.ok("mock" in t)
@@ -55,6 +61,7 @@ beforeEach(t => {
 after(() => sqlite.close())
 const request = () => new Request("https://app.example.com/api/emails/email/message")
 const params = () => ({ params: Promise.resolve({ id: "email", messageId: "message" }) })
+const sendParams = (id = "email") => ({ params: Promise.resolve({ id }) })
 const sendRequest = (body: unknown = { to: "a@example.com", subject: "Subject", content: "<p>Hello</p>" }) =>
   new Request(request(), { method: "POST", body: JSON.stringify(body) })
 const usedQuota = () => sqlite.prepare("SELECT COALESCE(SUM(used), 0) AS n FROM send_usage").get()?.n
@@ -92,6 +99,61 @@ test("mailbox creation trims valid names and persists a normalized address", asy
   const body = await response.json() as { id: string; email: string }
   assert.equal(body.email, "alice.tag+news@example.com")
   assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ?").get(body.id)?.address, body.email)
+})
+
+test("mailbox creation enforces user domain access and leaves Emperor access unrestricted", async () => {
+  config.set("EMAIL_DOMAINS", "example.com, example.org")
+  sqlite.prepare("INSERT INTO user_email_domain_access(user_id,domains) VALUES('owner',?)").run(JSON.stringify(["example.org"]))
+
+  const before = sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n
+  const denied = await generate.POST(new Request(request(), {
+    method: "POST", body: JSON.stringify({ name: "notallowed", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(denied.status, 403)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, before)
+  assert.deepEqual((await (await siteConfig.GET()).json() as { availableEmailDomains: string[] }).availableEmailDomains, ["example.org"])
+
+  const allowed = await generate.POST(new Request(request(), {
+    method: "POST", body: JSON.stringify({ name: "allowed", domain: "example.org", expiryTime: 0 }),
+  }))
+  assert.equal(allowed.status, 200)
+
+  sessionRole = "emperor"
+  const emperor = await generate.POST(new Request(request(), {
+    method: "POST", body: JSON.stringify({ name: "emperor", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(emperor.status, 200)
+})
+
+test("Emperor can update a user's allowed domains without accepting unconfigured domains", async () => {
+  config.set("EMAIL_DOMAINS", "example.com, example.org")
+  sessionRole = "emperor"
+  const update = (allowedDomains: unknown) => userDomains.PATCH(new Request(request(), {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ userId: "victim", allowedDomains }),
+  }))
+
+  sessionId = "victim"
+  assert.equal((await update(["example.org"])).status, 403)
+  sessionId = "owner"
+
+  const saved = await update([" EXAMPLE.org ", "example.org"])
+  assert.equal(saved.status, 200)
+  assert.deepEqual(JSON.parse(String(sqlite.prepare("SELECT domains FROM user_email_domain_access WHERE user_id = 'victim'").get()?.domains)), ["example.org"])
+
+  const listed = await (await rolesUsers.GET(new Request("https://app.example.com/api/roles/users"))).json() as {
+    users: Array<{ id: string; allowedDomains: string[] | null }>
+  }
+  assert.deepEqual(listed.users.find(user => user.id === "victim")?.allowedDomains, ["example.org"])
+
+  const invalid = await update(["unconfigured.example"])
+  assert.equal(invalid.status, 400)
+  assert.deepEqual(JSON.parse(String(sqlite.prepare("SELECT domains FROM user_email_domain_access WHERE user_id = 'victim'").get()?.domains)), ["example.org"])
+
+  const resetAccess = await update(null)
+  assert.equal(resetAccess.status, 200)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user_email_domain_access WHERE user_id = 'victim'").get()?.n, 0)
 })
 
 test("invalid mailbox names never create a mailbox", async () => {
@@ -378,6 +440,118 @@ test("API key permissions are bounded even when the owner is emperor", async () 
   for (const permission of [PERMISSIONS.MANAGE_API_KEY, PERMISSIONS.MANAGE_WEBHOOK, PERMISSIONS.PROMOTE_USER]) {
     assert.equal(await getUserId(permission), undefined, permission)
   }
+})
+
+test("per-domain Resend configuration uses each domain's own API key", async t => {
+  config.set("EMAIL_DOMAINS", "example.com,other.example")
+  const saved = await emailService.POST(new Request(request(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      domains: {
+        "example.com": { enabled: true, apiKey: "example-key" },
+        "other.example": { enabled: true, apiKey: "other-key" },
+      },
+      roleLimits: { duke: 2, knight: -1 },
+    }),
+  }))
+  assert.equal(saved.status, 200)
+
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('other-email','owner@other.example','owner',0,?)")
+    .run(Date.now() + 60_000)
+  const authorizationHeaders: string[] = []
+  t.mock.method(globalThis, "fetch", async (_input: RequestInfo | URL, init?: RequestInit) => {
+    authorizationHeaders.push(new Headers(init?.headers).get("Authorization") ?? "")
+    return Response.json({ id: "sent" })
+  })
+
+  assert.equal((await send.POST(sendRequest(), sendParams())).status, 200)
+  assert.equal((await send.POST(sendRequest(), sendParams("other-email"))).status, 200)
+  assert.deepEqual(authorizationHeaders, ["Bearer example-key", "Bearer other-key"])
+  assert.deepEqual(JSON.parse(config.get("RESEND_CONFIG") ?? "{}"), {
+    "example.com": { enabled: true, apiKey: "example-key" },
+    "other.example": { enabled: true, apiKey: "other-key" },
+  })
+
+  const settings = await (await emailService.GET()).json() as {
+    domains: Record<string, { apiKey: string; hasApiKey: boolean; configured: boolean }>
+  }
+  assert.equal(settings.domains["example.com"].apiKey, "")
+  assert.equal(settings.domains["example.com"].hasApiKey, true)
+  assert.equal(settings.domains["other.example"].configured, true)
+})
+
+test("legacy global Resend settings remain active until per-domain config is saved", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  const provider = t.mock.method(globalThis, "fetch", async () => Response.json({ id: "sent" }))
+
+  assert.equal((await send.POST(sendRequest(), sendParams())).status, 200)
+  assert.equal(new Headers(provider.mock.calls[0].arguments[1]?.headers).get("Authorization"), "Bearer test-only")
+  assert.equal(config.has("RESEND_CONFIG"), false)
+
+  const settings = await (await emailService.GET()).json() as {
+    domains: Record<string, { enabled: boolean; hasApiKey: boolean }>
+  }
+  assert.equal(settings.domains["example.com"].enabled, true)
+  assert.equal(settings.domains["example.com"].hasApiKey, true)
+})
+
+test("saved per-domain config denies sending from a removed domain", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("RESEND_CONFIG", JSON.stringify({
+    "example.com": { enabled: true, apiKey: "example-key" },
+  }))
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('removed-email','owner@removed.example','owner',0,?)")
+    .run(Date.now() + 60_000)
+  const provider = t.mock.method(globalThis, "fetch", async () => Response.json({ id: "unexpected" }))
+
+  const response = await send.POST(sendRequest(), sendParams("removed-email"))
+  assert.equal(response.status, 403)
+  assert.equal(provider.mock.callCount(), 0)
+  assert.equal(usedQuota(), 0)
+})
+
+test("Catch-all sender overrides require a valid prefix and a configured Catch-all mailbox", async () => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("RESEND_CONFIG", JSON.stringify({
+    "example.com": { enabled: true, apiKey: "example-key" },
+  }))
+  config.set("CATCHALL_EMAIL", JSON.stringify({
+    "example.com": { address: "catch@example.com", enabled: true, showAlways: true },
+  }))
+  sqlite.exec("UPDATE email SET address = 'catch@example.com'; UPDATE user_role SET role_id = 'emperor' WHERE user_id = 'owner'")
+  sessionRole = "emperor"
+
+  const invalidPrefix = await send.POST(sendRequest({
+    to: "a@example.com",
+    subject: "Subject",
+    content: "Hello",
+    fromLocalPart: "invalid prefix",
+  }), sendParams())
+  assert.equal(invalidPrefix.status, 400)
+  assert.equal(usedQuota(), 0)
+
+  sqlite.exec("UPDATE email SET address = 'owner@example.com'")
+  const ordinaryMailboxOverride = await send.POST(sendRequest({
+    to: "a@example.com",
+    subject: "Subject",
+    content: "Hello",
+    fromLocalPart: "spoofed",
+  }), sendParams())
+  assert.equal(ordinaryMailboxOverride.status, 403)
+  assert.equal(usedQuota(), 0)
+})
+
+test("send permission is filtered by the mailbox domain", async () => {
+  config.set("RESEND_CONFIG", JSON.stringify({
+    "example.com": { enabled: true, apiKey: "example-key" },
+    "other.example": { enabled: false, apiKey: "other-key" },
+  }))
+
+  const enabled = await sendPermission.GET(new Request("https://app.example.com/api/emails/send-permission?address=owner%40example.com"))
+  const disabled = await sendPermission.GET(new Request("https://app.example.com/api/emails/send-permission?address=owner%40other.example"))
+  assert.equal((await enabled.json() as { canSend: boolean }).canSend, true)
+  assert.equal((await disabled.json() as { canSend: boolean }).canSend, false)
 })
 
 test("send rejects invalid input and unauthorized requests without quota or delivery side effects", async t => {

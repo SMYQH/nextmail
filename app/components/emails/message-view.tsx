@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useTranslations } from "next-intl"
 import { Loader2, Share2 } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label"
 import { EmailHtml } from "./email-html"
 import { useToast } from "@/components/ui/use-toast"
 import { ShareMessageDialog } from "./share-message-dialog"
+import { mailboxSnapshots, notifyMailboxUpdate } from "@/lib/mailbox-events"
 
 interface Message {
   id: string
@@ -24,12 +25,14 @@ interface MessageViewProps {
   emailId: string
   messageId: string
   messageType?: 'received' | 'sent'
+  wasUnread?: boolean
+  onRead?: () => void
   onClose: () => void
 }
 
 type ViewMode = "html" | "text"
 
-export function MessageView({ emailId, messageId, messageType = 'received' }: MessageViewProps) {
+export function MessageView({ emailId, messageId, messageType = 'received', onRead }: MessageViewProps) {
   const t = useTranslations("emails.messageView")
   const tList = useTranslations("emails.list")
   const [message, setMessage] = useState<Message | null>(null)
@@ -37,9 +40,11 @@ export function MessageView({ emailId, messageId, messageType = 'received' }: Me
   const [error, setError] = useState<string | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("html")
   const { toast } = useToast()
+  const notifiedRead = useRef(false)
 
   useEffect(() => {
     const controller = new AbortController()
+    const snapshot = mailboxSnapshots.snapshot()
     const fetchMessage = async () => {
       try {
         setLoading(true)
@@ -63,9 +68,17 @@ export function MessageView({ emailId, messageId, messageType = 'received' }: Me
           return
         }
         
-        const data = await response.json() as { message: Message }
+        const data = await response.json() as { message: Message; total?: number; unread?: number }
         if (controller.signal.aborted) return
         setMessage(data.message)
+        if (messageType !== 'sent' && !notifiedRead.current) {
+          notifiedRead.current = true
+          notifyMailboxUpdate({
+            emailId, messageId, totalDelta: 0, unreadDelta: 0, read: true,
+            total: data.total, unread: data.unread,
+          }, snapshot)
+          onRead?.()
+        }
         setViewMode(data.message.html ? "html" : "text")
       } catch (error) {
         if (controller.signal.aborted) return
@@ -84,7 +97,7 @@ export function MessageView({ emailId, messageId, messageType = 'received' }: Me
 
     fetchMessage()
     return () => controller.abort()
-  }, [emailId, messageId, messageType, toast, t, tList])
+  }, [emailId, messageId, messageType, onRead, toast, t, tList])
 
   if (loading) {
     return (

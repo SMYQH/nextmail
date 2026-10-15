@@ -11,6 +11,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { ShareMessageDialog } from "./share-message-dialog"
 import { LatestRequestGate } from "@/lib/latest-request-gate"
 import { mergeRefreshedMessages } from "@/lib/message-list-refresh"
+import { MAILBOX_UPDATE_EVENT, mailboxSnapshots, notifyMailboxUpdate, type MailboxUpdate } from "@/lib/mailbox-events"
 import {
   AlertDialog,
   AlertDialogAction,
@@ -31,6 +32,7 @@ interface Message {
   sent_at?: number
   content?: string
   html?: string
+  is_read?: boolean
 }
 
 interface MessageListProps {
@@ -39,7 +41,7 @@ interface MessageListProps {
     address: string
   }
   messageType: 'received' | 'sent'
-  onMessageSelect: (messageId: string | null, messageType?: 'received' | 'sent') => void
+  onMessageSelect: (messageId: string | null, messageType?: 'received' | 'sent', wasUnread?: boolean) => void
   selectedMessageId?: string | null
   refreshTrigger?: number
 }
@@ -47,7 +49,10 @@ interface MessageListProps {
 interface MessageResponse {
   messages: Message[]
   nextCursor: string | null
-  total: number
+  total?: number
+  latestCursor: string
+  hasMore?: boolean
+  unread?: number
 }
 
 export function MessageList({ email, messageType, onMessageSelect, selectedMessageId, refreshTrigger }: MessageListProps) {
@@ -62,6 +67,7 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
   const nextCursorRef = useRef<string | null>(null)
   const pollTimeoutRef = useRef<ReturnType<typeof setInterval> | null>(null)
   const messagesRef = useRef<Message[]>([]) // 添加 ref 来追踪最新的消息列表
+  const latestCursorRef = useRef<string | null>(null)
   const requestGateRef = useRef(new LatestRequestGate())
   const activeRequestRef = useRef<AbortController | null>(null)
   const [total, setTotal] = useState(0)
@@ -85,11 +91,26 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     setNextCursor(cursor)
   }
 
+  const mergeIncomingMessages = (incoming: Message[]) => {
+    const merged = [...new Map([...messagesRef.current, ...incoming].map(message => [message.id, message])).values()]
+    // Arrival order can differ from display order when deliveries finish out of order.
+    return merged.sort((a, b) => (
+      (messageType === 'sent' ? b.sent_at : b.received_at) || 0
+    ) - ((messageType === 'sent' ? a.sent_at : a.received_at) || 0) || b.id.localeCompare(a.id))
+  }
+
   const fetchMessages = async (cursor?: string, kind: FetchKind = cursor ? "more" : "poll") => {
-    if (kind === "poll" && activeRequestRef.current) return
+    if (kind === "poll" && (activeRequestRef.current || document.visibilityState === "hidden")) return
 
     const scope = `mailbox:${email.id}:${messageType}`
     const ticket = requestGateRef.current.begin(scope)
+    const snapshot = mailboxSnapshots.snapshot()
+    const isSnapshotCurrent = () => messageType === 'sent' || mailboxSnapshots.isCurrent(email.id, snapshot)
+    const reconcileCounts = (data: MessageResponse) => {
+      if (messageType !== 'sent' && data.total !== undefined && data.unread !== undefined) {
+        Object.assign(data, mailboxSnapshots.reconcile(email.id, snapshot, { total: data.total, unread: data.unread }))
+      }
+    }
     activeRequestRef.current?.abort()
     const controller = new AbortController()
     activeRequestRef.current = controller
@@ -112,12 +133,41 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
       if (cursor) {
         url.searchParams.set('cursor', cursor)
       }
+      const incremental = kind === "poll" && latestCursorRef.current
+      if (incremental) url.searchParams.set('since', incremental)
+      if (incremental) {
+        let hasMore = true
+        while (hasMore && ticket.isCurrent()) {
+          const response = await fetch(url, { signal: controller.signal })
+          if (!response.ok) return
+          const data = await response.json() as MessageResponse
+          if (!ticket.isCurrent() || !isSnapshotCurrent()) return
+          reconcileCounts(data)
+          replaceMessages(mergeIncomingMessages(data.messages))
+          // The mailbox list may already include these arrivals in its aggregate snapshot.
+          if (typeof data.total === "number") setTotal(data.total)
+          if (messageType !== 'sent' && data.total !== undefined && data.unread !== undefined) notifyMailboxUpdate({
+            emailId: email.id, totalDelta: 0, unreadDelta: 0,
+            total: data.total, unread: data.unread,
+          })
+          latestCursorRef.current = data.latestCursor
+          hasMore = Boolean(data.hasMore)
+          url.searchParams.set('since', data.latestCursor)
+        }
+        return
+      }
       const response = await fetch(url, { signal: controller.signal })
       if (!response.ok) return
       const data = await response.json() as MessageResponse
-      if (!ticket.isCurrent()) return
+      if (!ticket.isCurrent() || !isSnapshotCurrent()) return
+      reconcileCounts(data)
 
       if (!cursor) {
+        // A head refresh does not include late arrivals that sort into the loaded tail.
+        if (!latestCursorRef.current) latestCursorRef.current = data.latestCursor
+        if (messageType !== 'sent' && data.unread !== undefined) notifyMailboxUpdate({
+          emailId: email.id, totalDelta: 0, unreadDelta: 0, total: data.total, unread: data.unread,
+        })
         const result = mergeRefreshedMessages(
           data.messages,
           messagesRef.current,
@@ -126,12 +176,12 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
         )
         replaceMessages(result.messages)
         replaceNextCursor(result.nextCursor)
-        setTotal(data.total)
+        if (typeof data.total === "number") setTotal(data.total)
         return
       }
-      replaceMessages([...messagesRef.current, ...data.messages])
+      replaceMessages(mergeIncomingMessages(data.messages))
       replaceNextCursor(data.nextCursor)
-      setTotal(data.total)
+      if (typeof data.total === "number") setTotal(data.total)
     } catch (error) {
       if (!controller.signal.aborted && ticket.isCurrent()) {
         console.error("Failed to fetch messages:", error)
@@ -177,6 +227,7 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
   }, 200)
 
   const handleDelete = async (message: Message) => {
+    const snapshot = mailboxSnapshots.snapshot()
     try {
       const response = await fetch(`/api/emails/${email.id}/${message.id}${messageType === 'sent' ? '?type=sent' : ''}`, {
         method: "DELETE"
@@ -192,8 +243,17 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
         return
       }
 
+      const data = await response.json() as { total?: number; unread?: number }
       replaceMessages(messagesRef.current.filter(e => e.id !== message.id))
-      setTotal(prev => prev - 1)
+      if (messageType === 'sent') {
+        setTotal(prev => Math.max(0, prev - 1))
+      } else if (typeof data.total === "number" && typeof data.unread === "number") {
+        setTotal(data.total)
+        notifyMailboxUpdate({
+          emailId: email.id, messageId: message.id, deleted: true,
+          totalDelta: 0, unreadDelta: 0, total: data.total, unread: data.unread,
+        }, snapshot)
+      }
 
       toast({
         title: tList("success"),
@@ -224,6 +284,7 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     activeRequestRef.current = null
     setMessages([])
     messagesRef.current = []
+    latestCursorRef.current = null
     setTotal(0)
     setLoading(true)
     replaceNextCursor(null)
@@ -245,6 +306,20 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshTrigger])
+
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<MailboxUpdate>).detail
+      if (detail.emailId !== email.id || messageType === 'sent') return
+      if (typeof detail.total === "number") setTotal(detail.total)
+      if (!detail.read && !detail.deleted) return
+      replaceMessages(detail.deleted
+        ? messagesRef.current.filter(message => message.id !== detail.messageId)
+        : messagesRef.current.map(message => message.id === detail.messageId ? { ...message, is_read: true } : message))
+    }
+    window.addEventListener(MAILBOX_UPDATE_EVENT, update)
+    return () => window.removeEventListener(MAILBOX_UPDATE_EVENT, update)
+  }, [email.id, messageType])
 
   return (
   <>
@@ -280,12 +355,12 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
                 )}
               >
                 <div className="flex items-start gap-3">
-                  <button type="button" onClick={() => onMessageSelect(message.id, messageType)}
+                  <button type="button" onClick={() => onMessageSelect(message.id, messageType, messageType !== 'sent' && !message.is_read)}
                     aria-pressed={selectedMessageId === message.id}
                     className="flex flex-1 min-w-0 items-start gap-3 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                   <Mail className="w-4 h-4 shrink-0 text-primary/60 mt-1" />
                   <div className="min-w-0 flex-1">
-                    <p className="font-medium text-sm truncate">{message.subject}</p>
+                    <p className={cn("text-sm truncate", messageType !== 'sent' && !message.is_read ? "font-bold" : "font-normal")}>{message.subject}</p>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
                       <span className="truncate">
                         {message.from_address || message.to_address || ''}

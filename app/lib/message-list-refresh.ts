@@ -8,9 +8,12 @@ export function mergeRefreshedMessages<T extends { id: string }>(
   oldMessages: T[],
   firstPageCursor: string | null,
   existingCursor: string | null,
+  isPaginatedItem: (item: T) => boolean = () => true,
 ): MessageListRefreshResult<T> {
   const firstDuplicateIndex = newMessages.findIndex(newMessage =>
-    oldMessages.some(oldMessage => oldMessage.id === newMessage.id)
+    isPaginatedItem(newMessage) && oldMessages.some(oldMessage =>
+      isPaginatedItem(oldMessage) && oldMessage.id === newMessage.id
+    )
   )
 
   if (firstDuplicateIndex === -1) {
@@ -21,7 +24,9 @@ export function mergeRefreshedMessages<T extends { id: string }>(
   }
 
   return {
-    messages: [...newMessages.slice(0, firstDuplicateIndex), ...oldMessages],
+    messages: [...newMessages, ...oldMessages.filter(message =>
+      isPaginatedItem(message) && !newMessages.some(updated => updated.id === message.id)
+    )],
     nextCursor: existingCursor,
   }
 }

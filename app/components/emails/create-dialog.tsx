@@ -20,6 +20,8 @@ interface CreateDialogProps {
   onEmailCreated: () => void
 }
 
+const EMPTY_DOMAINS: string[] = []
+
 export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
   const { config, loading: configLoading, error: configError, fetch: fetchConfig } = useConfig()
   const t = useTranslations("emails.create")
@@ -33,6 +35,7 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
   const { toast } = useToast()
   const { copyToClipboard } = useCopy()
   const mailboxName = emailName.trim().toLowerCase()
+  const availableDomains = config?.availableEmailDomains ?? EMPTY_DOMAINS
 
   const generateRandomName = () => setEmailName(nanoid(8))
 
@@ -68,7 +71,11 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
         const data = await response.json()
         toast({
           title: tList("error"),
-          description: response.status === 409 ? t("nameTaken") : (data as { error: string }).error,
+          description: response.status === 409
+            ? t("nameTaken")
+            : (data as { error?: string }).error === "Email domain is not available to this user"
+              ? t("domainUnavailable")
+              : (data as { error: string }).error,
           variant: "destructive"
         })
         return
@@ -93,10 +100,10 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
   }
 
   useEffect(() => {
-    if ((config?.emailDomainsArray?.length ?? 0) > 0) {
-      setCurrentDomain(config?.emailDomainsArray[0] ?? "")
+    if (!availableDomains.includes(currentDomain)) {
+      setCurrentDomain(availableDomains[0] ?? "")
     }
-  }, [config])
+  }, [availableDomains, currentDomain])
 
   return (
     <Dialog open={open} onOpenChange={value => {
@@ -130,13 +137,13 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
               placeholder={t("namePlaceholder")}
               className="min-w-0 flex-1 basis-40"
             />
-            {(config?.emailDomainsArray?.length ?? 0) > 1 && (
+            {availableDomains.length > 1 && (
               <Select value={currentDomain} onValueChange={setCurrentDomain}>
                 <SelectTrigger className="w-[180px] max-w-full">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  {config?.emailDomainsArray?.map(d => (
+                  {availableDomains.map(d => (
                     <SelectItem key={d} value={d}>@{d}</SelectItem>
                   ))}
                 </SelectContent>
@@ -176,7 +183,7 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
 
           <div className="flex min-w-0 items-center gap-2 text-sm text-muted-foreground">
             <span className="shrink-0">{t("domain")}:</span>
-            {mailboxName ? (
+            {mailboxName && currentDomain ? (
               <div className="flex items-center gap-2 min-w-0">
                 <span className="truncate">{`${mailboxName}@${currentDomain}`}</span>
                 <Button
@@ -194,6 +201,9 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
               <span className="text-muted-foreground">...</span>
             )}
           </div>
+          {config && !configLoading && availableDomains.length === 0 && (
+            <p className="text-sm text-muted-foreground" role="status">{t("noDomains")}</p>
+          )}
         </div>
         <div className="flex justify-end gap-2">
           <Button variant="outline" onClick={() => setOpen(false)} disabled={loading}>

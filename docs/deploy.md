@@ -1,5 +1,7 @@
 # NextMail 部署说明
 
+<a id="runtime-requirements"></a>
+
 ## 运行时要求
 
 OpenNext 应用运行在 Cloudflare Workers。主 Worker 使用 `nodejs_compat`、`nodejs_compat_populate_process_env` 和 `global_fetch_strictly_public` 兼容性标志，兼容性日期为 `2025-04-01` 或更新日期。`process.env` 中的认证密钥和 OAuth 配置依赖前两个标志。请勿在应用路由中添加 Next.js `runtime = "edge"`；OpenNext 使用 Node.js 兼容运行时。请参阅 [Cloudflare Node.js 兼容性文档](https://developers.cloudflare.com/workers/runtime-apis/nodejs/)。
@@ -24,7 +26,7 @@ OpenNext 应用运行在 Cloudflare Workers。主 Worker 使用 `nodejs_compat`�
 npm run deploy
 ```
 
-脚本首先调用 Cloudflare Token 验证接口，并只读检查 D1、KV、Workers Scripts、Zone、Email Routing Rules；设置 `CUSTOM_DOMAIN` 时，也会检查该域名对应 Zone 的 Worker Routes。部署预检仅按本次环境配置确定目标 Zone，不要求访问 `wrangler.json` 中将被替换或移除的旧路由所属 Zone；留空 `CUSTOM_DOMAIN` 时使用 `workers.dev`。若 Token 无效或资源访问检查失败，流程会在构建、迁移及任何 Cloudflare 写操作之前停止。随后脚本验证 `EMAIL_DOMAIN` 是同名 Zone 的顶级域，读取主 Worker 是否已存在，更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Worker 打包，而不发布到 Cloudflare。构建、产物检查和 Wrangler 打包成功后，脚本才会检查或创建 `nextmail-d1`、检查已启用的 Webhook，并执行远程数据库迁移。迁移后，脚本会解析 KV、同步可选的 GitHub Secrets，并部署主 Worker；远程迁移与后续 KV、Secrets、Worker 发布并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。脚本会修改三个 Wrangler 配置中的 `database_id`，以及 `wrangler.json` 中的 KV ID 和路由；请在执行前确认这些文件可以被写入。
+脚本首先调用 Cloudflare Token 验证接口，并只读检查 D1、KV、Workers Scripts、Zone、Email Routing Rules；设置 `CUSTOM_DOMAIN` 时，也会检查该域名对应 Zone 的 Worker Routes。部署预检仅按本次环境配置确定目标 Zone，不要求访问 `wrangler.json` 中将被替换或移除的旧路由所属 Zone；留空 `CUSTOM_DOMAIN` 时使用 `workers.dev`。若 Token 无效或资源访问检查失败，流程会在构建、迁移及任何 Cloudflare 写操作之前停止。随后脚本验证 `EMAIL_DOMAIN` 是同名 Zone 的顶级域，读取主 Worker 是否已存在，更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Worker 打包，而不发布到 Cloudflare。构建、产物检查和 Wrangler 打包成功后，脚本才会解析 `DATABASE_ID` 指定的数据库（未指定时检查或创建 `nextmail-d1`）、检查已启用的 Webhook，并执行远程数据库迁移。迁移后，脚本会解析 KV、同步可选的 GitHub Secrets，并部署主 Worker；远程迁移与后续 KV、Secrets、Worker 发布并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。脚本会修改三个 Wrangler 配置中的 `database_id`，以及主应用与邮件接收 Worker 的 `SITE_CONFIG` KV ID 和主应用路由；请在执行前确认这些文件可以被写入。
 
 预检同时支持用户令牌和账户令牌：先调用用户验证接口；若该接口拒绝令牌，再调用目标账户的 [Token 验证接口](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/)。两种令牌都必须处于有效期内且状态为 `active`。
 
@@ -38,12 +40,13 @@ Cloudflare 的 Token 验证接口只返回 Token 状态，不会返回已分配�
 
 ### Cloudflare API Token 权限
 
-将令牌的账户资源限定为 NextMail 使用的 Cloudflare 账户，将区域资源限定为自定义域名所属的 Zone。部署所需权限如下：
+将令牌的账户资源限定为 NextMail 使用的 Cloudflare 账户。邮件路由权限限定为 `EMAIL_DOMAIN` 对应的 Zone；设置 `CUSTOM_DOMAIN` 时，网站路由权限限定为该主机所属的 Zone。两者可能不同。部署所需权限如下：
 
 | 范围 | 权限 |
 | --- | --- |
 | 账户 | `D1: Edit`、`Workers KV Storage: Edit`、`Workers Scripts: Edit` |
-| 区域 | `Zone: Read`、`Email Routing Rules: Edit`；设置 `CUSTOM_DOMAIN` 时还需要 `Workers Routes: Edit` |
+| `EMAIL_DOMAIN` 所属区域 | `Zone: Read`、`Email Routing Rules: Edit` |
+| `CUSTOM_DOMAIN` 所属区域（设置时） | `Zone: Read`、`Workers Routes: Edit` |
 
 当前项目不需要 `Cloudflare Pages: Edit`、`Zone Settings: Read/Edit`、`DNS: Edit`、`API Tokens: Edit` 或 `Email Routing Addresses: Edit`。
 
@@ -115,8 +118,8 @@ GitHub 和 Google 登录均为可选项。每个登录方式只有在其 ID 和 
 ### Cloudflare 配置
 - `CLOUDFLARE_API_TOKEN`：Cloudflare API Token；按[最小部署权限](#cloudflare-api-token-权限)配置，自动设置 Catch All 需要目标 Zone 的 `Email Routing Rules: Edit` 权限。
 - `CLOUDFLARE_ACCOUNT_ID`: Cloudflare Account ID
-- D1 数据库名固定为 `nextmail-d1`。
-- `DATABASE_ID`: D1 数据库 ID (可选, 如果不填, 则会自动通过 Cloudflare API 获取)
+- 自动发现或新建 D1 时使用名称 `nextmail-d1`。
+- `DATABASE_ID`: 可选，手动指定账户中 `nextmail-d1` 的数据库 ID；未设置时按名称查找或创建。脚本使用指定 ID，不校验该数据库的名称，迁移会直接写入此 ID 对应的数据库，运行前必须核对目标。
 - Cloudflare KV namespace 名称固定为 `nextmail-kv`，用于存储网站配置。
 - `KV_NAMESPACE_ID`: Cloudflare KV namespace ID，用于存储网站配置 （可选， 如果不填, 则会自动通过 Cloudflare API 获取）
 - `CUSTOM_DOMAIN`: 网站自定义主机名，例如 `app.example.com`（可选）；必须属于此 Cloudflare 账号管理的 Zone 且 DNS 已代理。部署脚本将其路由到 Worker；留空时启用 `workers.dev` 地址。`pages.dev` 不属于你的 Zone，不能作为此项。
@@ -126,6 +129,8 @@ GitHub 和 Google 登录均为可选项。每个登录方式只有在其 ID 和 
 
 - `REPOSITORY_URL`：目标 GitHub 仓库 URL（可选；必须与 `GITHUB_TOKEN` 同时填写）。
 - `GITHUB_TOKEN`：具有目标仓库 `Secrets: Read and write` 权限的 GitHub 令牌（可选；仅用于本地同步，不发送到 Actions Secrets）。
+
+<a id="webhook-setup"></a>
 
 ## Webhook 配置
 
@@ -162,3 +167,11 @@ WEBHOOK_ALLOWED_HOSTS="hooks.example.com,notifications.example.com"
 5. 配置环境变量 `AUTH_GOOGLE_ID` 和 `AUTH_GOOGLE_SECRET`
 
 首次部署后，皇帝必须在系统配置中保存已启用 Email Routing 的接收域名（与 `EMAIL_DOMAIN` 对应）。未设置 `EMAIL_DOMAINS` 时，配置接口返回空域名列表，创建邮箱返回 503；网站域名不能作为默认接收域名。
+
+### 多域名 Catch-all 配置
+
+主应用与邮件接收 Worker 必须绑定同一个 `SITE_CONFIG` KV namespace。完整部署脚本会同步两个配置文件中的绑定；手动部署时请同时检查 `./wrangler.json` 和 `./wrangler.email.json`。每个接收域名均需在 Cloudflare Email Routing 中将邮件交给邮件接收 Worker；完整部署只自动配置 `EMAIL_DOMAIN` 对应的 Zone，其余域名需单独配置。
+
+升级前先备份 D1。新增迁移 `./drizzle/0020_user_email_domain_access.sql`、`./drizzle/0021_message_read_tracking.sql` 和 `./drizzle/0022_stable_mail_delivery.sql`，分别保存用户域名权限、邮件已读状态，以及 Catch-all 固定邮箱关联与邮件写入序号。0022 为现有邮件回填序号，并用触发器记录所有后续插入，因此升级耗时与已有邮件数量有关。它不删除邮件或修改邮件时间。部署新版应用前必须应用迁移，再同步发布邮件接收 Worker。旧时间游标在新版接口上会重放一次元数据，客户端按 ID 去重。
+
+手动升级时，先应用迁移，再发布新版邮件接收 Worker，最后发布主应用。完整部署脚本会先发布主应用、再发布邮件接收 Worker；使用完整脚本时，须等待两个 Worker 都更新成功后再修改 Catch-all 前缀。

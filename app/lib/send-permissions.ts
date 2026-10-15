@@ -5,43 +5,55 @@ import { userRoles, roles, sendUsage } from "@/lib/schema"
 import { eq, and } from "drizzle-orm"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
 import { EMAIL_CONFIG } from "@/config"
+import { getEnabledResendDomains, getResendConfigForAddress, loadResendConfig } from "@/lib/resend"
 
 export interface SendPermissionResult {
   canSend: boolean
   error?: string
   remainingEmails?: number
+  enabledDomains?: string[]
 }
 
 export async function checkSendPermission(
   userId: string,
-  skipDailyLimitCheck = false
+  skipDailyLimitCheck = false,
+  address?: string,
 ): Promise<SendPermissionResult> {
   try {
     const env = getCloudflareContext().env
-    const enabled = await env.SITE_CONFIG.get("EMAIL_SERVICE_ENABLED")
+    const { config } = await loadResendConfig(env.SITE_CONFIG)
+    const enabledDomains = getEnabledResendDomains(config)
 
-    if (enabled !== "true") {
+    const addressConfig = address ? getResendConfigForAddress(config, address) : undefined
+    const domainCanSend = address
+      ? Boolean(addressConfig?.enabled && addressConfig.apiKey.trim())
+      : enabledDomains.length > 0
+
+    if (!domainCanSend) {
       return {
         canSend: false,
-        error: "邮件发送服务未启用"
+        error: address ? "该邮箱域名未启用 Resend 发件服务" : "邮件发送服务未启用",
+        enabledDomains,
       }
     }
 
     const userDailyLimit = await getUserDailyLimit(userId)
-    
+
     if (userDailyLimit === -1) {
       return {
         canSend: false,
-        error: "您的角色没有发件权限"
+        error: "您的角色没有发件权限",
+        enabledDomains,
       }
     }
 
     if (skipDailyLimitCheck || userDailyLimit === 0) {
       return {
-        canSend: true
+        canSend: true,
+        enabledDomains,
       }
     }
-    
+
     const db = createDb()
     const today = new Date().toISOString().slice(0, 10)
     const usage = await db.query.sendUsage.findFirst({
@@ -50,18 +62,20 @@ export async function checkSendPermission(
     const sentToday = usage?.used ?? 0
 
     const remainingEmails = Math.max(0, userDailyLimit - sentToday)
-    
+
     if (sentToday >= userDailyLimit) {
       return {
         canSend: false,
         error: `您今天已达到发件限制 (${userDailyLimit} 封)，请明天再试`,
-        remainingEmails: 0
+        remainingEmails: 0,
+        enabledDomains,
       }
     }
 
     return {
       canSend: true,
-      remainingEmails
+      remainingEmails,
+      enabledDomains,
     }
   } catch (error) {
     console.error('Failed to check send permission:', safeErrorMetadata(error))
@@ -75,7 +89,7 @@ export async function checkSendPermission(
 async function getUserDailyLimit(userId: string): Promise<number> {
   try {
     const db = createDb()
-    
+
     const userRoleData = await db
       .select({ roleName: roles.name })
       .from(userRoles)
@@ -86,9 +100,9 @@ async function getUserDailyLimit(userId: string): Promise<number> {
 
     const env = getCloudflareContext().env
     const roleLimitsStr = await env.SITE_CONFIG.get("EMAIL_ROLE_LIMITS")
-    
+
     const customLimits = roleLimitsStr ? JSON.parse(roleLimitsStr) : {}
-    
+
     const finalLimits = {
       emperor: EMAIL_CONFIG.DEFAULT_DAILY_SEND_LIMITS.emperor,
       duke: customLimits.duke !== undefined ? customLimits.duke : EMAIL_CONFIG.DEFAULT_DAILY_SEND_LIMITS.duke,
@@ -116,8 +130,8 @@ async function getUserDailyLimit(userId: string): Promise<number> {
 export async function checkBasicSendPermission(userId: string): Promise<SendPermissionResult> {
   return checkSendPermission(userId, true)
 }
-export async function reserveSend(userId: string): Promise<SendPermissionResult & { day?: string }> {
-  const permission = await checkBasicSendPermission(userId)
+export async function reserveSend(userId: string, address?: string): Promise<SendPermissionResult & { day?: string }> {
+  const permission = await checkSendPermission(userId, true, address)
   if (!permission.canSend) return permission
   const limit = await getUserDailyLimit(userId)
   if (limit < 0) return { canSend: false, error: "Your role cannot send email" }

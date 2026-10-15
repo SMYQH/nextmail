@@ -5,7 +5,7 @@ import { useSession } from "next-auth/react"
 import { useTranslations } from "next-intl"
 import { CreateDialog } from "./create-dialog"
 import { ShareDialog } from "./share-dialog"
-import { Mail, RefreshCw, Trash2 } from "lucide-react"
+import { Inbox, Mail, RefreshCw, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { useThrottle } from "@/hooks/use-throttle"
@@ -25,12 +25,17 @@ import { ROLES } from "@/lib/permissions"
 import { useUserRole } from "@/hooks/use-user-role"
 import { useConfig } from "@/hooks/use-config"
 import { mergeRefreshedMessages } from "@/lib/message-list-refresh"
+import { MAILBOX_UPDATE_EVENT, mailboxSnapshots, type MailboxUpdate } from "@/lib/mailbox-events"
+import { LatestRequestGate } from "@/lib/latest-request-gate"
 
 interface Email {
   id: string
   address: string
   createdAt: number
   expiresAt: number
+  isCatchAll?: boolean
+  totalMessages?: number
+  unreadMessages?: number
 }
 
 interface EmailListProps {
@@ -41,7 +46,7 @@ interface EmailListProps {
 interface EmailResponse {
   emails: Email[]
   nextCursor: string | null
-  total: number
+  total?: number
 }
 
 export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
@@ -51,6 +56,8 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const t = useTranslations("emails.list")
   const tCommon = useTranslations("common.actions")
   const [emails, setEmails] = useState<Email[]>([])
+  const [domain, setDomain] = useState("")
+  const gateRef = useRef(new LatestRequestGate())
   const emailsRef = useRef<Email[]>([])
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
@@ -72,37 +79,48 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   }, [])
 
   const fetchEmails = useCallback(async (cursor?: string) => {
+    const ticket = gateRef.current.begin(domain)
+    const snapshot = mailboxSnapshots.snapshot()
     try {
       const url = new URL("/api/emails", window.location.origin)
+      if (domain) url.searchParams.set('domain', domain)
       if (cursor) {
         url.searchParams.set('cursor', cursor)
       }
       const response = await fetch(url)
+      if (!response.ok) return
       const data = await response.json() as EmailResponse
+      if (!ticket.isCurrent()) return
+      const updatedEmails = data.emails.map(email => {
+        const counts = mailboxSnapshots.reconcile(email.id, snapshot, { total: email.totalMessages, unread: email.unreadMessages })
+        return { ...email, totalMessages: counts.total, unreadMessages: counts.unread }
+      })
       
       if (!cursor) {
         const result = mergeRefreshedMessages(
-          data.emails,
+          updatedEmails,
           emailsRef.current,
           data.nextCursor,
           nextCursorRef.current,
+          email => !email.isCatchAll,
         )
         replaceEmails(result.messages)
         replaceNextCursor(result.nextCursor)
-        setTotal(data.total)
+        if (typeof data.total === "number") setTotal(data.total)
         return
       }
-      replaceEmails([...emailsRef.current, ...data.emails])
+      replaceEmails([...emailsRef.current, ...updatedEmails])
       replaceNextCursor(data.nextCursor)
-      setTotal(data.total)
+      if (typeof data.total === "number") setTotal(data.total)
     } catch (error) {
       console.error("Failed to fetch emails:", error)
     } finally {
+      if (!ticket.isCurrent()) return
       setLoading(false)
       setRefreshing(false)
       setLoadingMore(false)
     }
-  }, [replaceEmails, replaceNextCursor])
+  }, [domain, replaceEmails, replaceNextCursor])
 
   const handleRefresh = async () => {
     setRefreshing(true)
@@ -123,8 +141,26 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   }, 200)
 
   useEffect(() => {
+    replaceEmails([])
+    replaceNextCursor(null)
+    setLoading(true)
     if (session) fetchEmails()
-  }, [session, fetchEmails])
+    const gate = gateRef.current
+    return () => gate.invalidate()
+  }, [session, fetchEmails, replaceEmails, replaceNextCursor])
+
+  useEffect(() => {
+    const update = (event: Event) => {
+      const detail = (event as CustomEvent<MailboxUpdate>).detail
+      replaceEmails(emailsRef.current.map(email => email.id === detail.emailId ? {
+        ...email,
+        totalMessages: detail.total ?? Math.max(0, (email.totalMessages || 0) + detail.totalDelta),
+        unreadMessages: detail.unread ?? Math.max(0, (email.unreadMessages || 0) + detail.unreadDelta),
+      } : email))
+    }
+    window.addEventListener(MAILBOX_UPDATE_EVENT, update)
+    return () => window.removeEventListener(MAILBOX_UPDATE_EVENT, update)
+  }, [replaceEmails])
 
   const handleDelete = async (email: Email) => {
     try {
@@ -192,7 +228,14 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
           </div>
           <CreateDialog onEmailCreated={handleRefresh} />
         </div>
-        
+        <div role="group" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/70 p-2" aria-label={t("domainFilter")}>
+          {["", ...(config?.emailDomainsArray || [])].map(value => (
+            <Button key={value} variant={domain === value ? "secondary" : "ghost"} size="sm"
+              aria-pressed={domain === value} onClick={() => setDomain(value)} className="shrink-0">
+              {value || t("allDomains")}
+            </Button>
+          ))}
+        </div>
         <div className="flex-1 overflow-auto p-1.5" onScroll={handleScroll}>
           {loading ? (
             <div className="text-center text-sm text-muted-foreground">{t("loading")}</div>
@@ -202,16 +245,20 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                 <div
                   key={email.id}
                   className={cn("fluent-list-item flex items-center gap-2 p-2 cursor-pointer text-sm group",
-                    selectedEmailId === email.id && "is-selected"
+                    selectedEmailId === email.id && "is-selected",
+                    email.isCatchAll && "border-b border-border/70"
                   )}
                 >
                   <button type="button" onClick={() => onEmailSelect(email)}
                     aria-pressed={selectedEmailId === email.id}
                     className="flex flex-1 min-w-0 items-center gap-2 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-                  <Mail className="h-4 w-4 shrink-0 text-primary/60" />
+                  {email.isCatchAll ? <Inbox aria-label={t("catchAll")} className="h-4 w-4 shrink-0 text-primary" /> : <Mail className="h-4 w-4 shrink-0 text-primary/60" />}
                   <div className="truncate flex-1">
                     <div className="font-medium truncate">{email.address}</div>
                     <div className="text-xs text-muted-foreground">
+                      <span className="block" aria-label={t("messageStats", { unread: email.unreadMessages || 0, total: email.totalMessages || 0 })}>
+                        {email.unreadMessages || 0} / {email.totalMessages || 0}
+                      </span>
                       {new Date(email.expiresAt).getFullYear() === 9999 ? (
                         t("permanent")
                       ) : (
@@ -222,7 +269,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                   </button>
                   <div className="flex shrink-0 gap-1" onClick={(e) => e.stopPropagation()}>
                     <ShareDialog emailId={email.id} emailAddress={email.address} />
-                    <Button
+                    {!email.isCatchAll && <Button
                       variant="ghost"
                       size="icon"
                       className="h-8 w-8"
@@ -233,7 +280,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
-                    </Button>
+                    </Button>}
                   </div>
                 </div>
               ))}

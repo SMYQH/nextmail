@@ -95,6 +95,9 @@
 - `EMAIL_DOMAINS`: 支持的邮箱域名，多个域名用逗号分隔
 - `ADMIN_CONTACT`: 管理员联系方式
 - `MAX_EMAILS`: 每个非皇帝用户可创建的最大活跃邮箱数量，默认值为 30；皇帝不受此限制
+- `CATCHALL_EMAIL`: 按域名保存 Catch-all 地址、启用状态和停用后的显示设置
+- `RESEND_CONFIG`: 按域名保存 Resend 启用状态和 API Key，仅皇帝可管理
+- `EMAIL_ROLE_LIMITS`: 保存公爵和骑士的每日发件限额
 
 **皇帝**角色可以在个人中心页面设置
 
@@ -130,8 +133,9 @@ NextMail 支持使用临时邮箱发送邮件，基于 [Resend](https://resend.c
    - 皇帝角色登录 NextMail
    - 进入个人中心页面
    - 在"Resend 发件服务配置"部分：
-     - 启用发件服务开关
-     - 填入 Resend API Key
+     - 找到需要配置的接收域名，启用该域名的发件开关
+     - 填入该域名的 Resend API Key；已有密钥留空可保留
+     - 对其他需要发件的域名分别配置
      - 设置公爵和骑士的每日发件限制（可选）
    - 点击保存配置
 
@@ -163,7 +167,7 @@ NextMail 支持使用临时邮箱发送邮件，基于 [Resend](https://resend.c
 - 🔐 **域名验证**：使用自定义域名发件需要在 Resend 中验证域名
 - 🚫 **反垃圾邮件**：请遵守邮件发送规范，避免发送垃圾邮件
 - 📊 **配额监控**：系统会自动统计每日发件数量，达到限额后将无法继续发送
-- 🔄 **配额重置**：每日发件配额在每天 00:00 自动重置
+- 🔄 **配额重置**：每日发件配额在每天 00:00 UTC 自动重置
 
 ## Webhook 集成
 
@@ -185,7 +189,7 @@ X-Webhook-Event: new_message
   "content": "邮件文本内容",
   "html": "邮件HTML内容",
   "receivedAt": "2024-01-01T12:00:00.000Z",
-  "toAddress": "your-email@nextmail.pages.dev"
+  "toAddress": "your-email@example.com"
 }
 ```
 
@@ -204,11 +208,11 @@ X-Webhook-Event: new_message
 npm run webhook-test-server
 ```
 
-测试服务器会在本地启动 HTTP 服务器，监听 3001 端口（http://localhost:3001），并打印收到的 Webhook 消息详情。
+测试服务器会在本地启动 HTTP 服务器，监听 3001 端口（http://localhost:3001），解析收到的 Webhook 消息，打印邮件主题并返回 HTTP 200。
 
-如果需要进行外网测试，可以通过 Cloudflare Tunnel 将服务暴露到外网：
+如果需要进行外网测试，先安装 Cloudflare Tunnel 的 `cloudflared` 可执行文件，再将服务暴露到外网：
 ```bash
-pnpx cloudflared tunnel --url http://localhost:3001
+cloudflared tunnel --url http://localhost:3001
 ```
 
 ### 注意事项
@@ -247,7 +251,7 @@ GET /api/config
 - `adminContact`: 管理员联系方式
 - `maxEmails`: 每个非皇帝用户可创建的最大活跃邮箱数量，默认值为 30；皇帝不受此限制
 
-皇帝请求该接口时，还会返回 `turnstile` 配置（`enabled`、`siteKey`、`secretKey`）。
+已认证用户还会收到 `availableEmailDomains`，表示当前用户可创建邮箱的域名。皇帝请求该接口时，还会返回 `turnstile` 配置（`enabled`、`siteKey`、`secretKey`）和 `catchAll.domains`；后者按域名包含 `enabled`、`showAlways`、`mailboxName`。
 
 #### 创建临时邮箱
 ```http
@@ -262,8 +266,8 @@ Content-Type: application/json
 ```
 参数说明：
 - `name`: 邮箱前缀，可选
-- `expiryTime`: 有效期（毫秒），可选值：3600000（1小时）、86400000（1天）、259200000（3天）、0（永久）
-- `domain`: 邮箱域名，可通过 `/api/config` 接口获取
+- `expiryTime`: 有效期（毫秒），必填，允许值：3600000（1小时）、86400000（1天）、259200000（3天）、0（永久）
+- `domain`: 邮箱域名，必填，从 `/api/config` 返回的 `availableEmailDomains` 中选择
 
 返回响应：
 ```json
@@ -278,10 +282,11 @@ Content-Type: application/json
 
 #### 获取邮箱列表
 ```http
-GET /api/emails?cursor=xxx
+GET /api/emails?cursor=xxx&domain=example.com
 ```
 参数说明：
 - `cursor`: 分页游标，可选
+- `domain`: 域名筛选，可选；不传时返回全部域名
 
 返回响应：
 ```json
@@ -302,7 +307,9 @@ GET /api/emails?cursor=xxx
 响应字段说明：
 - `emails`: 邮箱列表数组
 - `nextCursor`: 下一页游标，用于分页请求
-- `total`: 邮箱总数量
+- `total`: 当前域名筛选结果的邮箱总数量，仅首次加载或刷新返回
+- `emails[].isCatchAll`: 是否为 Catch-all 邮箱
+- `emails[].unreadMessages` / `emails[].totalMessages`: 收件箱未读数与总数
 
 #### 获取指定邮箱邮件列表
 ```http
@@ -332,7 +339,12 @@ GET /api/emails/{emailId}?cursor=xxx
 响应字段说明：
 - `messages`: 邮件列表数组
 - `nextCursor`: 下一页游标，用于分页请求
-- `total`: 邮件总数量
+- `total`: 邮件总数量，首次加载、手动刷新及增量轮询均返回；后续普通分页保留已有总数
+- `unread`: 收件列表的未读数量，首次加载、手动刷新及增量轮询均返回；客户端使用返回的总数更新统计，避免与邮箱列表刷新重复累计
+- `latestCursor`: 增量查询游标；首次无 `cursor` 请求的响应用于初始化轮询，随后仅使用 `since` 响应推进检查点。普通分页响应中的值不能作为轮询检查点；手动刷新列表头部时也须保留已有检查点，以免遗漏排序在旧页中的延迟收件。使用 `since=latestCursor` 获取更新的邮件元数据
+- `hasMore`: 增量结果是否还有下一页；为真时用返回的 `latestCursor` 继续请求
+
+列表仅返回元数据及 `is_read`，正文请通过邮件详情接口获取。增量查询按数据库写入序号升序返回，即使邮件时间更早或随机 ID 更小，后提交的邮件也能被获取；普通分页仍按邮件时间及 ID 降序返回。游标是不透明值，客户端不应自行构造或解析。本人读取邮件详情会将收到的邮件标为已读，并返回操作后的 `total`、`unread` 统计；重复或跨会话读取按服务端统计更新，不会重复减少未读数。
 
 #### 删除邮箱
 ```http
@@ -386,6 +398,8 @@ GET /api/emails/{emailId}/{messageId}
 DELETE /api/emails/{emailId}/{messageId}
 ```
 
+删除收件后返回 `success` 及操作后的收件箱 `total`、`unread`，客户端应直接应用这些统计，避免跨会话已读状态变化导致重复扣减。删除发件仅返回 `success`。
+
 #### 创建邮箱分享链接
 ```http
 POST /api/emails/{emailId}/share
@@ -416,7 +430,7 @@ Content-Type: application/json
 - `expiresAt`: 分享链接过期时间，null 表示永久有效
 - `createdAt`: 创建时间
 
-分享链接访问地址：`https://nextmail.pages.dev/shared/{token}`
+分享链接访问地址：`https://app.example.com/shared/{token}`
 
 #### 获取邮箱的所有分享链接
 ```http
@@ -492,7 +506,7 @@ Content-Type: application/json
 - `expiresAt`: 分享链接过期时间，null 表示永久有效
 - `createdAt`: 创建时间
 
-分享链接访问地址：`https://nextmail.pages.dev/shared/message/{token}`
+分享链接访问地址：`https://app.example.com/shared/message/{token}`
 
 邮件分享不会延长所属邮箱的有效期。通过 `GET /api/shared/message/{token}` 读取时，分享或邮箱已到期（含恰好到期）会返回 HTTP 410，响应不含邮件正文；分享已撤销或相关记录已删除时返回 HTTP 404。
 
@@ -543,9 +557,11 @@ DELETE /api/emails/{emailId}/messages/{messageId}/share/{shareId}
 
 ### 使用示例
 
+以下 `https://app.example.com` 需替换为当前站点的自定义域名或 `workers.dev` 地址；邮箱接收域名另行配置。
+
 使用 curl 创建临时邮箱：
 ```bash
-curl -X POST https://nextmail.pages.dev/api/emails/generate \
+curl -X POST https://app.example.com/api/emails/generate \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -557,7 +573,7 @@ curl -X POST https://nextmail.pages.dev/api/emails/generate \
 
 使用 JavaScript 获取邮件列表：
 ```javascript
-const res = await fetch('https://nextmail.pages.dev/api/emails/your-email-id', {
+const res = await fetch('https://app.example.com/api/emails/your-email-id', {
   headers: {
     'X-API-Key': 'YOUR_API_KEY'
   }
@@ -567,7 +583,7 @@ const data = await res.json();
 
 使用 curl 创建邮箱分享链接：
 ```bash
-curl -X POST https://nextmail.pages.dev/api/emails/your-email-id/share \
+curl -X POST https://app.example.com/api/emails/your-email-id/share \
   -H "X-API-Key: YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
@@ -577,7 +593,7 @@ curl -X POST https://nextmail.pages.dev/api/emails/your-email-id/share \
 
 使用 JavaScript 创建邮件分享链接：
 ```javascript
-const res = await fetch('https://nextmail.pages.dev/api/emails/your-email-id/messages/your-message-id/share', {
+const res = await fetch('https://app.example.com/api/emails/your-email-id/messages/your-message-id/share', {
   method: 'POST',
   headers: {
     'X-API-Key': 'YOUR_API_KEY',
@@ -588,7 +604,23 @@ const res = await fetch('https://nextmail.pages.dev/api/emails/your-email-id/mes
   })
 });
 const data = await res.json();
-console.log('分享链接:', `https://nextmail.pages.dev/shared/message/${data.token}`);
+console.log('分享链接:', `https://app.example.com/shared/message/${data.token}`);
 ```
 
 邮箱域名必须是运营者配置了 Email Routing 的接收域名。未设置 `EMAIL_DOMAINS` 时，`/api/config` 返回空字符串，创建邮箱返回 HTTP 503。
+
+## 多域名邮箱管理
+
+皇帝可在网站配置中分别为每个接收域名启用 Catch-all、设置邮箱前缀，并决定停用后是否继续显示该邮箱。系统创建归皇帝所有且永不过期的 Catch-all 邮箱；修改前缀会保留邮箱及已有邮件。已被其他邮箱占用的地址不能用于该配置。Catch-all 邮箱在列表置顶，需通过网站设置管理，不能从邮箱列表直接删除。
+
+未知地址的邮件仅在所属域名已配置且启用 Catch-all 时进入该邮箱；系统不会为每个未知地址新建邮箱。已存在但过期的收件地址仍按过期策略丢弃。邮件与 Webhook 保留实际收件地址，发件人优先显示邮件正文头部的 From 地址，缺失时使用 SMTP 信封地址。
+
+Catch-all 重命名保留邮箱 ID 及原邮件，收件通过数据库中的固定关联定位。KV 保存失败时，可直接重试相同配置，系统会复用已创建的邮箱。
+
+Catch-all 列表标识、置顶及删除保护也通过注册的邮箱 ID 判断；配置中的地址尚未同步时，仍不能直接删除该邮箱及原邮件。
+
+Resend 发件服务支持按域名分别启停和保存 API Key。留空已有密钥输入框会保留当前密钥。旧版全局配置在首次保存域名配置前继续兼容；已移除的域名配置显示失效提示，下次保存时清除。皇帝使用 Catch-all 邮箱发件时可修改发件地址前缀，域名固定为当前邮箱的域名；普通邮箱使用自身地址。每日发送限制继续按用户统计。
+
+皇帝可在角色管理中设置其他用户允许创建邮箱的域名。未单独配置的用户继承当前全部站点域名；明确取消全部域名后，该用户不能创建新邮箱。皇帝始终可使用全部站点域名。该设置限制新建邮箱，已有邮箱保留。
+
+邮箱列表支持按域名筛选，并显示收件箱的未读数与总数。打开本人收到的邮件后自动标为已读，公开分享页不会修改所有者的已读状态。当前邮箱每 30 秒从上次游标增量获取新邮件；页面隐藏时跳过轮询，重新显示后继续。手动刷新会更新统计及首屏邮件状态；已加载旧页中的其他会话删除或已读变化可能仍保留缓存，重新加载页面可清除旧页缓存。

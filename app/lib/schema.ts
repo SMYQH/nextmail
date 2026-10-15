@@ -64,6 +64,7 @@ export const messages = sqliteTable("message", {
   content: text("content").notNull(),
   html: text("html"),
   type: text("type"),
+  isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
   receivedAt: integer("received_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -72,8 +73,23 @@ export const messages = sqliteTable("message", {
     .$defaultFn(() => new Date()),
 }, (table) => ({
   emailIdIdx: index("message_email_id_idx").on(table.emailId),
+  emailReadIdx: index("message_email_read_idx").on(table.emailId, table.isRead, table.type),
   emailIdReceivedAtTypeIdx: index("message_email_id_received_at_type_idx").on(table.emailId, table.receivedAt, table.type),
 }))
+
+// Stable routing survives mailbox renames and configuration-store retries.
+export const catchAllMailboxes = sqliteTable("catch_all_mailbox", {
+  domain: text("domain").primaryKey(),
+  emailId: text("email_id").notNull().unique()
+    .references(() => emails.id, { onDelete: "cascade" }),
+})
+
+// The insert trigger assigns an order independent of delivery timestamps and UUIDs.
+export const messageArrivals = sqliteTable("message_arrival", {
+  sequence: integer("sequence").primaryKey({ autoIncrement: true }),
+  messageId: text("message_id").notNull().unique()
+    .references(() => messages.id, { onDelete: "cascade" }),
+})
 
 export const webhooks = sqliteTable('webhook', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -109,6 +125,11 @@ export const userRoles = sqliteTable("user_role", {
   pk: primaryKey({ columns: [table.userId, table.roleId] }),
   userIdIdx: index("user_role_user_id_idx").on(table.userId),
 }));
+
+export const userEmailDomainAccess = sqliteTable("user_email_domain_access", {
+  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  domains: text("domains").notNull(),
+});
 
 export const apiKeys = sqliteTable('api_keys', {
   id: text('id').primaryKey().$defaultFn(() => crypto.randomUUID()),
@@ -173,8 +194,16 @@ export const userRolesRelations = relations(userRoles, ({ one }) => ({
   }),
 }));
 
+export const userEmailDomainAccessRelations = relations(userEmailDomainAccess, ({ one }) => ({
+  user: one(users, {
+    fields: [userEmailDomainAccess.userId],
+    references: [users.id],
+  }),
+}));
+
 export const usersRelations = relations(users, ({ many }) => ({
   userRoles: many(userRoles),
+  emailDomainAccess: many(userEmailDomainAccess),
   apiKeys: many(apiKeys),
 }));
 

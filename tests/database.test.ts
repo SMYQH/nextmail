@@ -43,6 +43,32 @@ test("migrations enforce case-insensitive email ownership", t => {
   assert.throws(() => db.exec("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('b','alice@example.com','b',0,999)"), /UNIQUE/)
 })
 
+test("arrival migration backfills existing mail and atomically records new insertions", t => {
+  const db = new DatabaseSync(":memory:", { enableDoubleQuotedStringLiterals: true })
+  t.after(() => db.close())
+  db.exec("PRAGMA foreign_keys = ON")
+  for (const file of readdirSync("drizzle").filter(file => file.endsWith(".sql") && file < "0022_stable_mail_delivery.sql").sort()) {
+    for (const statement of readFileSync(`drizzle/${file}`, "utf8").split("--> statement-breakpoint")) {
+      if (statement.trim()) db.exec(statement)
+    }
+  }
+  db.exec("INSERT INTO email(id,address,created_at,expires_at) VALUES('e','a@example.com',0,999)")
+  db.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at) VALUES('old','e','old','body',100,100)")
+  for (const statement of readFileSync("drizzle/0022_stable_mail_delivery.sql", "utf8").split("--> statement-breakpoint")) {
+    if (statement.trim()) db.exec(statement)
+  }
+  const sequence = Number(db.prepare("SELECT sequence FROM message_arrival WHERE message_id='old'").get()?.sequence)
+  assert.ok(sequence > 0)
+  db.exec("BEGIN; INSERT INTO message(id,emailId,subject,content,received_at,sent_at) VALUES('rolled-back','e','new','body',1,1); ROLLBACK")
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM message_arrival").get()?.n, 1)
+  db.exec("DELETE FROM message")
+  db.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at) VALUES('late','e','new','body',1,1)")
+  assert.ok(Number(db.prepare("SELECT sequence FROM message_arrival WHERE message_id='late'").get()?.sequence) > sequence)
+  db.exec("INSERT INTO catch_all_mailbox(domain,email_id) VALUES('example.com','e'); DELETE FROM email")
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM catch_all_mailbox").get()?.n, 0)
+  assert.equal(db.prepare("SELECT COUNT(*) AS n FROM message_arrival").get()?.n, 0)
+})
+
 test("only one contender can claim Emperor, including direct assignments", t => {
   const db = migratedDatabase(t)
   db.exec("INSERT INTO user(id) VALUES ('a'), ('b'); INSERT INTO role(id,name) VALUES ('r','emperor')")

@@ -4,7 +4,7 @@ import { PERMISSIONS } from "@/lib/permissions"
 import { NextResponse } from "next/server"
 import { createDb } from "@/lib/db"
 import { messages, emails } from "@/lib/schema"
-import { and, eq } from "drizzle-orm"
+import { and, eq, isNull, ne, or, sql } from "drizzle-orm"
 import { getUserId } from "@/lib/apiKey"
 
 export async function DELETE(
@@ -51,7 +51,17 @@ export async function DELETE(
     await db.delete(messages)
         .where(eq(messages.id, messageId))
 
-    return NextResponse.json({ success: true })
+    const [statistics] = message.type !== "sent" ? await db.select({
+      total: sql<number>`count(*)`,
+      unread: sql<number>`coalesce(sum(case when ${messages.isRead} = 0 then 1 else 0 end), 0)`,
+    }).from(messages).where(and(
+      eq(messages.emailId, id), or(ne(messages.type, "sent"), isNull(messages.type)),
+    )) : []
+
+    return NextResponse.json({
+      success: true,
+      ...(statistics ? { total: Number(statistics.total), unread: Number(statistics.unread) } : {}),
+    })
   } catch (error) {
     console.error('Failed to delete email:', safeErrorMetadata(error))
     return NextResponse.json(
@@ -99,7 +109,22 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
     
-    return NextResponse.json({ 
+    const marked = message.type !== "sent" && !message.isRead
+      ? await db.update(messages).set({ isRead: true })
+        .where(and(eq(messages.id, messageId), eq(messages.emailId, id), eq(messages.isRead, false)))
+        .returning({ id: messages.id })
+      : []
+
+    const [statistics] = message.type !== "sent" ? await db.select({
+      total: sql<number>`count(*)`,
+      unread: sql<number>`coalesce(sum(case when ${messages.isRead} = 0 then 1 else 0 end), 0)`,
+    }).from(messages).where(and(
+      eq(messages.emailId, id), or(ne(messages.type, "sent"), isNull(messages.type)),
+    )) : []
+
+    return NextResponse.json({
+      wasUnread: marked.length > 0,
+      ...(statistics ? { total: Number(statistics.total), unread: Number(statistics.unread) } : {}),
       message: {
         id: message.id,
         from_address: message.fromAddress,
@@ -109,7 +134,8 @@ export async function GET(_request: Request, { params }: { params: Promise<{ id:
         html: message.html,
         received_at: message.receivedAt.getTime(),
         sent_at: message.type === "sent" ? message.sentAt.getTime() : undefined,
-        type: message.type as 'received' | 'sent'
+        type: message.type as 'received' | 'sent',
+        is_read: message.type !== "sent" ? true : message.isRead
       }
     })
   } catch (error) {
