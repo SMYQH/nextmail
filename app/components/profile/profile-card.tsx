@@ -159,7 +159,7 @@ export function ProfileCard({ user, canInitializeEmperor }: ProfileCardProps) {
 
       <div className="flex flex-col sm:flex-row gap-4 px-1">
         <Button
-          onClick={() => router.push(`/${locale}/moe`)}
+          onClick={() => router.push(`/${locale}/mailbox`)}
           className="gap-2 flex-1"
         >
           <Mail className="w-4 h-4" />

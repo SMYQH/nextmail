@@ -8,7 +8,7 @@ import { PERMISSIONS } from "@/lib/permissions"
 import type { Locale } from "@/i18n/config"
 
 
-export default async function MoePage({
+export default async function MailboxPage({
   params,
 }: {
   params: Promise<{ locale: string }>

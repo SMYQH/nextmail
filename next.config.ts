@@ -11,7 +11,7 @@ const nextConfig: import("next").NextConfig = {
   async headers() {
     return [
       { source: "/api/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
-      { source: "/:locale/(moe|profile|shared)/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
+      { source: "/:locale/(mailbox|moe|profile|shared)/:path*", headers: [{ key: "Cache-Control", value: "private, no-store" }] },
       { source: "/sw.js", headers: [{ key: "Cache-Control", value: "no-cache, no-store" }, { key: "Service-Worker-Allowed", value: "/" }] },
     ]
   },
