@@ -20,6 +20,7 @@
     "deploy:email": "wrangler deploy --config wrangler.email.json",
     "deploy:cleanup": "wrangler deploy --config wrangler.cleanup.json",
     "deploy": "tsx scripts/deploy/index.ts",
+    "delete": "tsx scripts/deploy/delete.ts",
     "test": "node --import tsx --experimental-test-module-mocks --test tests/*.test.ts"
   },
   "type": "module",

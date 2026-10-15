@@ -3,12 +3,7 @@ import { auth } from "@/lib/auth"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
 import { CLAIM_EMPEROR_SQL } from "@/lib/database-statements"
 
-// Browser navigation leads to the explicit claim UI; GET never assigns a role.
-export async function GET(request: Request) {
-  return Response.redirect(new URL("/profile", request.url), 307)
-}
-
-export async function POST() {
+async function initializeEmperor() {
   const session = await auth()
   if (!session?.user?.id) return Response.json({ error: "Unauthorized" }, { status: 401 })
   const db = getCloudflareContext().env.DB
@@ -26,4 +21,21 @@ export async function POST() {
     console.error("Failed to initialize emperor:", safeErrorMetadata(error))
     return Response.json({ error: "Failed to initialize emperor" }, { status: 500 })
   }
+}
+
+export async function GET() {
+  return initializeEmperor()
+}
+
+export async function POST() {
+  return initializeEmperor()
+}
+
+// Next.js otherwise routes HEAD through GET, which would also initialize the role.
+export async function HEAD() {
+  return new Response(null, { status: 405, headers: { Allow: "GET, POST, OPTIONS" } })
+}
+
+export async function OPTIONS() {
+  return new Response(null, { status: 204, headers: { Allow: "GET, POST, OPTIONS" } })
 }

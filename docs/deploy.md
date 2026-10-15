@@ -17,14 +17,18 @@ OpenNext 应用运行在 Cloudflare Workers。主 Worker 使用 `nodejs_compat`�
 ### 本地部署脚本
 
 1. 复制 `.env.deploy.example` 为 `.env.deploy` 并填写[环境变量](#环境变量)。`.env.deploy` 已被 Git 忽略，本地部署从此文件读取部署配置，也兼容读取 `.env` 中的应用配置。OpenNext 会把应用 `.env*` 编译进 Worker，因此部署令牌只能放在 `.env.deploy` 或进程环境中；构建会拒绝应用环境文件中的部署令牌。旧配置请将部署参数移入 `.env.deploy`。
-2. 确认 `.env.deploy` 中的 Cloudflare API Token 具备下文列出的[最小部署权限](#cloudflare-api-token-权限)。
+2. `.env.deploy` 中的 Cloudflare API Token 需要具备下文列出的[最小部署权限](#cloudflare-api-token-权限)。`npm run deploy` 会在构建前验证 Token 状态，并对所需账户和 Zone API 执行只读访问检查；检查失败时不会开始构建或更改远程资源。
 3. 如需同时配置 GitHub Actions，在 `.env.deploy` 中填写 `REPOSITORY_URL` 和 `GITHUB_TOKEN`；留空任意一项则跳过同步。
 4. 运行部署脚本：
 ```bash
 npm run deploy
 ```
 
-脚本先验证 `EMAIL_DOMAIN` 能匹配到同名 Cloudflare Zone，并读取主 Worker 是否已存在；随后更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Wrangler 的 Worker 打包，而不发布到 Cloudflare。OpenNext 构建、产物检查和 Wrangler 打包成功后，脚本才会检查或创建 `nextmail-d1`、检查已启用的 Webhook，并执行远程数据库迁移。构建失败或预检失败时不会运行数据库迁移。迁移后，脚本会解析 KV、同步可选的 GitHub Secrets，并用已构建的产物部署主 Worker；远程迁移与后续 KV、Secrets、Worker 发布并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。脚本会修改三个 Wrangler 配置中的 `database_id`，以及 `wrangler.json` 中的 KV ID 和路由；请在执行前确认这些文件可以被写入。
+脚本首先调用 Cloudflare Token 验证接口，并只读检查 D1、KV、Workers Scripts、Zone、Email Routing Rules；设置 `CUSTOM_DOMAIN` 时，也会检查该域名对应 Zone 的 Worker Routes。部署预检仅按本次环境配置确定目标 Zone，不要求访问 `wrangler.json` 中将被替换或移除的旧路由所属 Zone；留空 `CUSTOM_DOMAIN` 时使用 `workers.dev`。若 Token 无效或资源访问检查失败，流程会在构建、迁移及任何 Cloudflare 写操作之前停止。随后脚本验证 `EMAIL_DOMAIN` 是同名 Zone 的顶级域，读取主 Worker 是否已存在，更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Worker 打包，而不发布到 Cloudflare。构建、产物检查和 Wrangler 打包成功后，脚本才会检查或创建 `nextmail-d1`、检查已启用的 Webhook，并执行远程数据库迁移。迁移后，脚本会解析 KV、同步可选的 GitHub Secrets，并部署主 Worker；远程迁移与后续 KV、Secrets、Worker 发布并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。脚本会修改三个 Wrangler 配置中的 `database_id`，以及 `wrangler.json` 中的 KV ID 和路由；请在执行前确认这些文件可以被写入。
+
+预检同时支持用户令牌和账户令牌：先调用用户验证接口；若该接口拒绝令牌，再调用目标账户的 [Token 验证接口](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/)。两种令牌都必须处于有效期内且状态为 `active`。
+
+Cloudflare 的 Token 验证接口只返回 Token 状态，不会返回已分配的权限策略。因此部署前的资源权限检查使用只读 API 请求确认相应账户和 Zone 范围可访问；它不会创建临时资源来试写权限。后续写操作仍需具备本节列出的 `Edit` 权限，Cloudflare 若拒绝写操作，部署可能在已经完成的远程步骤之后中止。
 
 迁移 `0007_careless_sentinel` 会把旧 `credential` 表中的用户名和密码哈希复制到 `user` 表后再删除旧表。这个保护适用于尚未应用迁移 0007 的数据库；如果远程数据库已记录 0007 为已完成，部署脚本无法从已删除的表中恢复凭据，发布前需单独确认该数据库的用户登录恢复方案。
 
@@ -42,6 +46,22 @@ npm run deploy
 | 区域 | `Zone: Read`、`Email Routing Rules: Edit`；设置 `CUSTOM_DOMAIN` 时还需要 `Workers Routes: Edit` |
 
 当前项目不需要 `Cloudflare Pages: Edit`、`Zone Settings: Read/Edit`、`DNS: Edit`、`API Tokens: Edit` 或 `Email Routing Addresses: Edit`。
+
+若通过 API 创建账户部署令牌，使用单独具备 `Account API Tokens: Edit` 权限的引导令牌，按上述权限创建部署令牌后，将新令牌保存到被忽略的 `.env.deploy`。部署令牌本身不需要令牌管理权限。API 权限组名称中的 `Write` 对应控制台的 `Edit`；请从目标账户的权限组接口获取 ID，不要根据名称猜测或复用其他权限组 ID。
+
+### 清理 Cloudflare 部署
+
+在确认要删除 NextMail 的 Cloudflare 资源及 D1 数据后，在仓库根目录运行：
+
+```bash
+npm run delete
+```
+
+命令从 `.env.deploy` 和进程环境读取 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`EMAIL_DOMAIN`；如果自定义域名路由曾部署过，保留对应的 `CUSTOM_DOMAIN` 或 `wrangler.json` 中的路由配置。脚本会先验证 Token，并在进行任何删除前列出将处理的资源。D1/KV 的显式 ID 若仍存在，必须分别指向名称为 `nextmail-d1` 和 `nextmail-kv` 的项目资源，否则会停止；已不存在的 ID 会按已清理资源跳过。
+
+清理范围仅限 `nextmail`、`email-receiver-worker`、`cleanup-worker` 三个 Worker，项目配置中指向 `nextmail` 的精确路由、名称为 `nextmail-kv` 的 KV namespace、名称为 `nextmail-d1` 的 D1 数据库，以及仍将邮件转发到 `email-receiver-worker` 的 `EMAIL_DOMAIN` Catch All。D1 数据库删除会移除其中的应用数据；执行前请先备份。Catch All API 没有删除该规则的操作，脚本会在它仍指向 NextMail Worker 时将其禁用。原有 Catch All 若曾被部署覆盖，项目没有保存其旧配置，清理时无法恢复。
+
+脚本不会删除 Cloudflare Zone 或 DNS 记录，也不会修改 GitHub 仓库、Actions Secrets、OAuth 应用、本地 `.env.deploy` 或 Wrangler 配置。清理后，`wrangler.json` 仍保留上次部署的资源 ID 和路由；再次部署时若显式设置的 `DATABASE_ID` 或 `KV_NAMESPACE_ID` 指向已删除资源，需要先清除或更新这些覆盖值。该流程不是原子操作；若 Cloudflare API 在部分删除后失败，可以再次运行，已不存在的 Worker、路由或资源会被跳过。
 
 ### Github Actions 部署
 
