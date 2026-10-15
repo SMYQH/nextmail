@@ -1,106 +1,130 @@
-# Repository Guidelines
+## Workflow
 
-## Everyday Workflow
-
-- Start with `git status --short` and inspect the diff for files relevant to the task. Preserve existing user changes and keep edits scoped to the request.
-- Use `rg --files` to find files and `rg -n` to locate symbols and callers. Read nearby implementations and applicable `AGENTS.md` files before editing.
-- Trace behavior through the affected page or component, API handler, shared logic, and tests. Reuse existing helpers and UI primitives before adding abstractions or dependencies.
-- Make reasonable, reversible implementation choices and complete the authorized work. Ask for clarification when missing information materially changes the required behavior or scope.
-- Before handing off, inspect `git diff --check`, the final diff, and `git status --short`. Summarize changed behavior, validation results, and any remaining blockers; leave unrelated files and generated artifacts out of the change.
+- Start with `git status --short`. Review relevant diffs. Preserve user changes; edit only requested files.
+- Find files with `rg --files` and symbols/callers with `rg -n`. Read nearby code and applicable `AGENTS.md` files.
+- Trace affected UI, API handlers, shared logic, and tests. Reuse helpers and UI primitives before adding abstractions or dependencies.
+- Make reversible choices within the authorized scope. Ask only when missing details materially affect behavior or scope.
+- Before handoff, run `git diff --check`; inspect final diff and `git status --short`. Report behavior changes, validation, and blockers. Exclude unrelated files and generated artifacts.
 
 ## Communication and Documentation
 
-- Always communicate with the user in English, even when the request is in Chinese.
-- Write `docs/*.md` files in Chinese, except `docs/review.md`, which must be in English; keep product UI translations in both English and Simplified Chinese in `./app/i18n/messages`.
-- Use relative paths, such as `./package.json`, instead of absolute paths when writing documents.
-- Use Chinese for commit subjects and pull request titles/descriptions, with conventional prefixes such as `fix: 修复邮箱权限检查`.
-- Read `docs/develop.md` for local development, `docs/deploy.md` for deployment, and `docs/usage.md` for product behavior. Verify commands against `package.json` and CI against `.github/workflows/deploy.yml`.
-- Before reviewing or fixing bugs, read `docs/review.md` and follow its recorded user decisions and deferred items. Do not restore material removed from that document, remove or weaken user annotations, or mark unverified behavior as fixed.
-- Maintain `docs/review.md` in English as the single authoritative ledger, with one table and one row per finding. Sort rows by ID descending so newest findings come first. Assign new IDs in increasing order; never renumber or reuse IDs.
-- Keep each row to a brief issue description and its current status or resolution. Do not include code, reproduction steps, root-cause analysis, implementation detail, commands, test logs, or separate history sections. Preserve user decisions, deferred work, and important verification limits in short notes.
-- Use these status labels consistently: `Open`, `Deferred (user-requested)`, `Partially resolved`, `Resolved locally`, `Resolved`, or `Accepted by user`. Use `Partially resolved` when only part of a finding is fixed. `Accepted by user` records a decision, not a technical fix. `Resolved locally` must not imply remote verification or deployment.
-- Update the existing row when status changes. Keep one current note per finding; do not add duplicate findings tables, dated update logs, or release-status summaries.
+- Communicate with users **in English**, even for Chinese requests.
+- Write `docs/*.md` in Chinese, except `docs/review.md` in English. Maintain English and Simplified Chinese UI translations in `./app/i18n/messages`.
+- Use relative document paths (for example, `./package.json`).
+- Write commit subjects and PR titles/descriptions in Chinese, with conventional prefixes (for example, `fix: 修复邮箱权限检查`).
+- Read `docs/develop.md` for development, `docs/deploy.md` for deployment, and `docs/usage.md` for product behavior. Verify commands in `package.json` and CI in `.github/workflows/deploy.yml`.
 
-## Current Library Documentation
+### Review ledger: `docs/review.md`
 
-Use Context7 MCP for library, framework, SDK, API, CLI, or cloud-service questions, including syntax, configuration, migrations, setup, and library-specific debugging. This is unnecessary for repository inventory, code review, business-logic debugging, general programming concepts, or refactoring that does not require library documentation.
+- Read before bug reviews or fixes. Respect recorded user decisions and deferred items. Never restore removed content, weaken/remove user annotations, or claim unverified fixes.
+- Keep this English file the **only authoritative ledger**: one table, one row per finding, IDs descending (newest first). Assign increasing IDs; never renumber or reuse them.
+- Each row contains only a brief issue and current status/resolution. Omit code, reproduction steps, causes, implementation details, commands, logs, and separate history. Keep decisions, deferrals, and verification limits in short notes.
+- Allowed statuses: `Open`, `Deferred (user-requested)`, `Partially resolved`, `Resolved locally`, `Resolved`, `Accepted by user`.
+- Use `Partially resolved` for incomplete fixes. `Accepted by user` is a decision, not a fix. `Resolved locally` does not establish remote verification or deployment.
+- Update existing rows when status changes. Keep one current note per finding. Never add duplicate tables, dated update logs, or release-status summaries.
 
-1. Start with `resolve-library-id`, including the library name and documentation question, unless an exact `/org/project` ID was supplied.
-2. Select the most relevant match using name, description, source reputation, snippet coverage, and benchmark score. Use a version-specific ID when available for a requested version; retry ambiguous searches.
-3. Call `query-docs` with a focused question for each distinct concept. Combine concepts only when their interaction is the question.
-4. Base library-specific guidance on fetched documentation. If Context7 is unavailable, say so and use official documentation.
+## Library Documentation
+
+Use **Context7 MCP** for questions about libraries, frameworks, SDKs, APIs, CLIs, or cloud services: syntax, configuration, migrations, setup, and library-specific debugging. Skip it for repository inventory, code review, business-logic debugging, general programming concepts, and refactoring without library-documentation needs.
+
+1. Call `resolve-library-id` with library name and question, unless given an exact `/org/project` ID.
+2. Select by name, description, source reputation, snippet coverage, and benchmark score. Prefer a version-specific ID when relevant; retry ambiguous matches.
+3. Call `query-docs` with one focused question per distinct concept. Combine questions only when their interaction matters.
+4. Ground library guidance in retrieved docs. If Context7 is unavailable, disclose that and use official documentation.
 
 ## Project Structure
 
-NextMail uses Next.js 15 App Router, React 19, TypeScript, and OpenNext on Cloudflare Workers with D1, KV, and separate email/cleanup Workers.
+NextMail: Next.js 15 App Router, React 19, TypeScript, OpenNext on Cloudflare Workers, D1, KV, and separate email/cleanup Workers.
 
-- `app/[locale]/`: localized home, login, mailbox, profile, and shared-message pages.
-- `app/api/`: route handlers; `app/lib/`: authentication, permissions, database schema/access, validation, and other shared logic.
-- `app/components/`: feature components and shared Radix-based UI primitives in `ui/`; `app/hooks/`: reusable hooks.
-- `app/i18n/`: locale configuration and request setup; `app/i18n/messages/{en,zh-CN}/`: translations.
-- `app/config/`, `app/types/`: configuration helpers and shared types; `app/globals.css`: shared styling and motion.
+- `app/[locale]/`: localized home, login, mailbox, profile, shared-message pages.
+- `app/api/`: route handlers. `app/lib/`: auth, permissions, DB schema/access, validation, shared logic.
+- `app/components/`: features and shared Radix-based `ui/` primitives. `app/hooks/`: reusable hooks.
+- `app/i18n/`: locale and request setup. `app/i18n/messages/{en,zh-CN}/`: translations.
+- `app/config/`, `app/types/`: config and types. `app/globals.css`: shared styling and motion.
 - `workers/email-receiver.ts`, `workers/cleanup.ts`: inbound email and scheduled cleanup.
-- `drizzle/`: SQL migrations; `scripts/`: migration, deployment, fixture, webhook, and icon tooling.
-- `tests/`: Node unit and route tests; `tests/helpers/database.ts`: in-memory SQLite/D1 test adapter.
-- `public/`: static assets, icons, and service worker; `docs/`: project documentation.
+- `drizzle/`: SQL migrations. `scripts/`: migration, deployment, fixture, webhook, icon tools.
+- `tests/`: Node unit/route tests. `tests/helpers/database.ts`: in-memory SQLite/D1 adapter.
+- `public/`: assets, icons, service worker. `docs/`: project documentation.
 
 ## Setup and Commands
 
-Use Node.js 24+ and npm. Run `npm ci` for a clean lockfile-based install; use `npm install` when intentionally changing dependencies. Copy `.env.example` to the ignored `.env`, configure it and the three tracked Wrangler JSON files as described in the deployment guide, then apply local migrations as needed.
+- Use **Node.js 24+** and npm. Run `npm ci` for a clean lockfile-based install; `npm install` only for intentional dependency changes.
+- Copy `.env.deploy.example` to ignored `.env.deploy`. Configure `.env.deploy` and the **three tracked Wrangler JSON files** per `docs/deploy.md`. Apply local migrations as needed.
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start the Next.js development server |
-| `npm run lint` | Run Next.js ESLint checks |
-| `npx tsc --noEmit` | Check TypeScript |
-| `npm test` | Run `tests/*.test.ts` using Node's test runner, `tsx`, and experimental module mocks |
-| `npm run build` | Build the production Next.js application |
-| `npm run build:worker` | Build OpenNext output and validate the Worker artifact and bindings |
-| `npm run preview:worker` | Build and preview the app in the local Workers runtime |
-| `npm run db:migrate-local` | Apply local D1 migrations |
-| `npm run dev:cleanup` | Start the cleanup Worker with scheduled testing enabled |
-| `npm run test:cleanup` | Invoke the local scheduled endpoint; requires the cleanup Worker to be running |
-| `npm run webhook-test-server` | Start a local webhook receiver |
-| `npm run generate-test-data` | Start the fixture Worker; see `docs/develop.md` for its invocation URL |
-| `npm run generate:icons` | Regenerate application icons |
+| Command                       | Action                                                       |
+| ----------------------------- | ------------------------------------------------------------ |
+| `npm run dev`                 | Next.js development server                                   |
+| `npm run lint`                | Next.js ESLint checks                                        |
+| `npx tsc --noEmit`            | TypeScript check                                             |
+| `npm test`                    | `tests/*.test.ts` via Node test runner, `tsx`, experimental module mocks |
+| `npm run build`               | Production Next.js build                                     |
+| `npm run build:worker`        | Build OpenNext; validate Worker artifact and bindings        |
+| `npm run preview:worker`      | Build and preview in local Workers runtime                   |
+| `npm run db:migrate-local`    | Local D1 migrations                                          |
+| `npm run dev:cleanup`         | Cleanup Worker with scheduled testing enabled                |
+| `npm run test:cleanup`        | Invoke local scheduled endpoint; cleanup Worker must be running |
+| `npm run webhook-test-server` | Local webhook receiver                                       |
+| `npm run generate-test-data`  | Fixture Worker; invocation URL in `docs/develop.md`          |
+| `npm run generate:icons`      | Regenerate app icons                                         |
 
-Remote actions include `npm run db:migrate-remote`, `npm run deploy`, `npm run deploy:worker`, `npm run deploy:email`, and `npm run deploy:cleanup`. Run them only within the user's authorized deployment scope; inspect migrations before applying them remotely.
+- Remote commands: `npm run db:migrate-remote`, `npm run deploy`, `npm run deploy:worker`, `npm run deploy:email`, `npm run deploy:cleanup`. Run **only within authorized deployment scope**. Inspect migrations before remote application.
+- On Windows, prefer `pwsh`, fallback `powershell`. Use UTF-8 `.ps1` or `.py` files for long/quoting-sensitive scripts.
+- OpenNext Worker builds are not fully supported on Windows. Use Linux/WSL/CI; distinguish environment limits from application failures.
+- For bracketed PowerShell paths such as `app/[locale]/`, use `-LiteralPath` with file cmdlets.
 
-On Windows, prefer `pwsh`, falling back to `powershell` if unavailable. Use UTF-8 `.ps1` or `.py` files for long or quoting-sensitive scripts. OpenNext warns that its build is not fully supported on Windows; use Linux/WSL/CI for Worker builds and report that environment limitation separately from application failures.
+## Implementation
 
-For PowerShell paths containing brackets, such as `app/[locale]/`, use `-LiteralPath` with file cmdlets to avoid wildcard expansion.
+- Follow existing TypeScript conventions: two-space indentation, mostly no semicolons, surrounding quote style. `@/*` maps to `app/*`.
+- PascalCase for components/types; `use-*.ts` for hooks; `page.tsx`, `layout.tsx`, `route.ts` for Next.js routes.
+- Put user-facing text in `next-intl`; update English and Simplified Chinese. Reuse UI primitives and existing design.
+- Preserve keyboard access, visible focus, responsive layouts, and reduced-motion behavior when editing controls or animations.
 
-## Implementation Conventions
+## Validation and PRs
 
-Follow existing TypeScript patterns, two-space indentation, predominantly semicolon-free formatting, and surrounding quote style. The `@/*` alias resolves to `app/*`. Use PascalCase for components/types, `use-*.ts` for hook filenames, and Next.js route conventions (`page.tsx`, `layout.tsx`, `route.ts`).
-
-Keep user-facing strings in `next-intl` translations and update both English and Simplified Chinese. Reuse shared UI primitives and follow the existing web design. Maintain keyboard operation, visible focus, responsive layouts, and reduced-motion behavior when changing controls or animation.
-
-## Validation and Pull Requests
-
-For code changes, run lint, TypeScript checks, relevant tests, and a production build. Include OpenNext Worker build validation when deployment or runtime compatibility changes. Node tests use local fixtures and require no external services; they do not establish production Cloudflare compatibility.
-
-During development, run focused suites from the repository root, for example:
+- For code changes, run lint, TypeScript, relevant tests, and production build. Include OpenNext Worker build checks for deployment/runtime changes.
+- Node tests use local fixtures, need no external services, and **do not prove production Cloudflare compatibility**.
+- Run focused suites from repo root during development, for example:
 
 ```sh
 node --import tsx --experimental-test-module-mocks --test tests/routes.test.ts tests/cleanup.test.ts
 ```
 
-Reuse `tests/helpers/database.ts` for database-backed tests and the existing mocks for external services. Assert observable behavior and side effects, including persisted data and external call counts; restore mocks and close test databases after use. See `docs/develop.md` for suite coverage and concurrency-testing limitations.
+- For DB tests, reuse `tests/helpers/database.ts`; use existing external-service mocks. Assert visible behavior and side effects, including persisted data and external call counts. Restore mocks and close test DBs. See `docs/develop.md` for coverage and concurrency limits.
+- Add focused regression tests or reproducible manual steps, especially for auth, permissions, API routes, DB operations, and Workers.
+- **No automated browser suite is configured**. Check affected UI in both locales, themes, mobile/short viewports, and keyboard/reduced-motion modes as relevant.
+- For UI edits, open affected pages, capture and inspect screenshots after transitions settle, and include screenshots in handoff. Build success or a running browser alone does not verify UI.
+- For docs-only edits, verify paths, commands, and diff; application builds are unnecessary.
+- Report exact validation commands, failures, and skipped checks. PRs must cover behavior, migrations/environment changes, relevant issues, and UI screenshots where applicable. Exclude generated build/test artifacts and unrelated edits.
 
-Add focused regression tests or reproducible manual steps for changed behavior, especially authentication, permissions, API routes, database operations, and Workers. Playwright is installed but no automated browser suite is configured. Check affected UI manually in both locales, themes, mobile/short viewports, and keyboard/reduced-motion modes as applicable.
+## Configuration and Security
 
-For UI changes, open the affected page, capture and inspect screenshots after transitions settle, and include relevant screenshots with the handoff. A successful build or running browser process alone does not verify appearance or interaction.
+- Keep `.env` and other local environment files ignored. Commit only credential-free `.env.deploy.example`.
+- Local deploy reads `.env.deploy` and app `.env`. Keep deployment credentials **only** in `.env.deploy` or process environment, never app `.env*` files.
+- When `REPOSITORY_URL` and `GITHUB_TOKEN` are set, local deployment syncs settings to GitHub Actions repository secrets. CI uses those secrets; **no `.env` fallback**.
+- Never expose credentials in output, logs, screenshots, or PR text. Do not add unrelated secrets.
+- Keep Wrangler JSON tracked. Keep `.dev.vars` ignored; `.dev.vars.example` is the template.
+- Earlier repository history included `.env`. Rotate old credentials; never restore old refs when publishing the repository.
 
-For documentation-only changes, verify paths, commands, and the diff; application builds are unnecessary. Report exact validation commands, failures, and skipped checks. Pull requests should describe behavior changes, migrations or environment changes, relevant issues, and UI screenshots when applicable. Do not include generated build/test artifacts or unrelated edits.
+Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare account**.
 
-## Configuration Policy
+- Required: `D1: Edit`, `Workers KV Storage: Edit`, `Workers Scripts: Edit`.
+- If `CUSTOM_DOMAIN` is set: `Workers Routes: Edit`, scoped to that domain's zone.
+- Email routing: `Zone: Read`, `Email Routing Rules: Edit`, scoped to the `EMAIL_DOMAIN` zone.
+- Not required: `Cloudflare Pages: Edit`, `Zone Settings: Read/Edit`, `DNS: Edit`, `API Tokens: Edit`, `Email Routing Addresses: Edit`.
+- Chinese deployment instructions: `docs/deploy.md`.
 
-Keep `.env` and other local environment files ignored. Commit only `.env.example` and `.env.deploy.example` without credentials. Local deployment reads `.env.deploy` and application `.env`; deployment credentials must stay in `.env.deploy` or process environment, never application `.env*` files; when `REPOSITORY_URL` and `GITHUB_TOKEN` are configured, it synchronizes its settings to GitHub Actions repository secrets. CI reads those secrets and has no `.env` fallback. Avoid exposing credential values in tool output, logs, screenshots, or pull request text, and do not add unrelated secrets. Wrangler JSON configuration remains tracked; `.dev.vars` stays ignored and `.dev.vars.example` is available as a template. Earlier repository history contained `.env`; rotate the old credentials and never reintroduce the old refs when making the repository public.
+## Subagents and Tool Cost
 
-For the deployment API token, scope account permissions to the NextMail Cloudflare account: `D1: Edit`, `Workers KV Storage: Edit`, and `Workers Scripts: Edit`. If `CUSTOM_DOMAIN` is set, also grant `Workers Routes: Edit` and scope it to that domain's zone. Email routing needs `Zone: Read` and `Email Routing Rules: Edit` for the `EMAIL_DOMAIN` zone. The app deployment does not require `Cloudflare Pages: Edit`, `Zone Settings: Read/Edit`, `DNS: Edit`, `API Tokens: Edit`, or `Email Routing Addresses: Edit`. See `docs/deploy.md` for the Chinese deployment instructions.
+- **Use subagents when many files are involved**, including repository exploration or large scoped changes, to control cost.
 
-## SubAgent Rule
+- **Not use subagents when reviewing source code**(this excludes low-intelligence automation tasks such as running tests or performing browser operations).
 
-To control costs, **you must use subagents only when a large number of files is involved**. Examples: exploring a code repository and returning the requested content as needed; making a large number of file changes with a clear objective. When instructing a subagent, **state only the requirements; do not also describe the environment or send the brief/full change details to the subagent**.
-Codex: Only GPT 6 Luna may be used as a subagent.`Effort`: Always max.
+- Give subagents **requirements only**. Do not restate environment or send brief/full change details.
+
+- When a tool/command produces high token cost and much irrelevant output, record it here. Next time, use a subagent to run it and ask  subagent for responsing with condense results .
+
+  **Tool:**
+
+  **Command:**
+
+- Codex: **Only GPT 6 Luna** may serve as a subagent. **Effort: Always max.**
