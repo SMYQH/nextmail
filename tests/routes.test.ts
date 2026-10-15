@@ -258,15 +258,33 @@ test("owners can discover and revoke sent-message shares after losing send permi
   }
 })
 
-test("opening the emperor endpoint redirects to the profile without assigning a role", async () => {
-  const before = sqlite.prepare("SELECT * FROM user_role ORDER BY user_id, role_id").all()
-  for (const userId of ["owner", undefined]) {
-    sessionId = userId
-    const response = await init.GET(new Request("https://app.example.com/api/roles/init-emperor"))
-    assert.equal(response.status, 307)
-    assert.equal(response.headers.get("location"), "https://app.example.com/profile")
-    assert.deepEqual(sqlite.prepare("SELECT * FROM user_role ORDER BY user_id, role_id").all(), before)
-  }
+test("GET initializes the emperor, while unauthenticated GET and HEAD do not change roles", async () => {
+  const before = sqlite.prepare("SELECT user_id, role_id FROM user_role ORDER BY user_id, role_id").all().map(row => ({ ...row }))
+  const response = await init.GET()
+  assert.equal(response.status, 200)
+  assert.deepEqual(await response.json(), { message: "Emperor initialized" })
+  assert.deepEqual(
+    sqlite.prepare("SELECT user_id, role_id FROM user_role ORDER BY user_id, role_id").all().map(row => ({ ...row })),
+    [{ user_id: "owner", role_id: "emperor" }],
+  )
+
+  sessionId = undefined
+  assert.equal((await init.GET()).status, 401)
+  const head = await init.HEAD()
+  assert.equal(head.status, 405)
+  assert.equal(head.headers.get("allow"), "GET, POST, OPTIONS")
+  const options = await init.OPTIONS()
+  assert.equal(options.status, 204)
+  assert.equal(options.headers.get("allow"), "GET, POST, OPTIONS")
+  assert.deepEqual(
+    sqlite.prepare("SELECT user_id, role_id FROM user_role ORDER BY user_id, role_id").all().map(row => ({ ...row })),
+    [{ user_id: "owner", role_id: "emperor" }],
+  )
+  sqlite.exec("UPDATE user_role SET role_id = 'duke' WHERE user_id = 'owner'")
+  assert.deepEqual(
+    sqlite.prepare("SELECT user_id, role_id FROM user_role ORDER BY user_id, role_id").all().map(row => ({ ...row })),
+    before,
+  )
 })
 
 test("emperor initialization rejects unauthenticated claims without changing roles", async () => {

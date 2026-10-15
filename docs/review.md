@@ -4,6 +4,10 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 70 | Deployment preflight rejects valid targets because of stale local Worker routes. | Resolved locally: effective deployment targets pass regression checks for fresh and existing Workers; remote deployment unverified. |
+| 69 | Cleanup tests depend on deployment-specific Wrangler configuration. | Resolved locally: isolated Wrangler fixtures pass cleanup and configured-route regression checks. |
+| 68 | GET emperor claims lose protocol headers in HTTP Worker preview. | Resolved: deployed; authenticated HTTP Worker preview and regression checks pass. |
+| 67 | Deployment and cleanup preflight reject valid account-owned Cloudflare tokens. | Resolved: regression checks and a full deployment with a scoped account token pass. |
 | 66 | The creation dialog's address copy control is inaccessible to keyboard users. | Resolved locally: a labeled button copies the normalized address with Enter and Space. |
 | 65 | Duplicate mailbox creation displays Chinese feedback on English pages. | Resolved locally: duplicate-address feedback passes browser checks in both locales. |
 | 64 | Copy notifications use Chinese text in both locales. | Resolved locally: shared copy notifications use translations verified in both locales. |
@@ -15,11 +19,11 @@ Newest findings appear first. Each row records only the issue and current dispos
 | 58 | Tailwind 4 migration shifts animated dialogs and interrupts switch motion. | Resolved locally: dialog positioning and switch transitions pass focused browser checks. |
 | 57 | Shared-page dates can differ between server and browser, causing hydration errors. | Resolved locally: shared mailbox and message pages hydrate consistently before displaying viewer-local dates. |
 | 56 | Migration 0007 discards existing password credentials. | Resolved locally for pending upgrades; previously deleted credentials cannot be recovered. Remote migration state is unverified. |
-| 55 | Deployment can migrate D1 before the candidate Worker builds successfully. | Resolved locally: build and packaging validation precede migration. Deployment remains non-atomic. |
+| 55 | Deployment can migrate D1 before the candidate Worker builds successfully. | Resolved: build and packaging checks preceded live migrations. Deployment remains non-atomic. |
 | 54 | Subdomain email deployment changes the parent zone's apex catch-all. | Resolved locally: domains matching only a parent Zone are rejected before database changes or publishing. |
-| 53 | Emperor claim URL returned 405; no claim UI existed. | Resolved locally: added a localized, confirmed claim flow. Not deployed. |
-| 52 | HTTP Worker preview selected the wrong session cookie. | Resolved locally. |
-| 51 | Deployment credentials entered the Worker from application environment files. | Resolved locally for documented build and deploy commands. |
+| 53 | Emperor claim URL returned 405; no claim UI existed. | Resolved: claim flow deployed; remote preview confirms authentication is required. |
+| 52 | HTTP Worker preview selected the wrong session cookie. | Resolved: deployed; HTTP session authentication passes isolated Worker checks. |
+| 51 | Deployment credentials entered the Worker from application environment files. | Resolved: documented deployment passed artifact checks without embedded deployment credentials. |
 | 50 | Checked-in screenshots contain personal data. | Accepted by user: screenshots remain unchanged. |
 | 49 | Deployment example used a Pages hostname for custom and email domains. | Resolved. |
 | 48 | Fresh installs advertised an unrouted fallback mail domain. | Resolved locally; remote mail delivery remains unverified. |

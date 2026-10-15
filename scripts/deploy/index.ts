@@ -3,24 +3,23 @@ import "./load-env";
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   createDatabase,
   createKVNamespace,
   getDatabase,
   getKVNamespaceList,
   getEnabledWebhookUrls,
-  getEmailCatchAllZone,
-  getZoneForHostname,
-  hasWorkerScript,
-  normalizeHostname,
   configureEmailCatchAll,
+  verifyCloudflareDeployAccess,
+  WORKER_NAME,
+  type WorkerRoute,
 } from "./cloudflare";
 import { assertWebhookDeployment } from "./webhook-config";
 import { syncLocalGitHubSecrets } from "./github-secrets";
 import { assertSafeBuildEnv } from "./validate-build-env";
 import { buildAndPreflightBeforeMigration, buildWorkerCandidate } from "./worker-deployment-sequence";
 
-const WORKER_NAME = "nextmail";
 const DATABASE_NAME = "nextmail-d1";
 const KV_NAMESPACE_NAME = "nextmail-kv";
 const KV_NAMESPACE_ID = process.env.KV_NAMESPACE_ID;
@@ -187,18 +186,6 @@ const checkAndCreateKVNamespace = async () => {
   }
 };
 
-type WorkerRoute = { pattern: string; zone_name: string };
-
-const resolveWorkerRoute = async (): Promise<WorkerRoute | undefined> => {
-  const customDomain = process.env.CUSTOM_DOMAIN?.trim();
-  if (!customDomain) return undefined;
-
-  const hostname = normalizeHostname(customDomain);
-  const zone = await getZoneForHostname(hostname);
-  if (!zone.name) throw new Error("No Cloudflare Zone name found for " + hostname);
-  return { pattern: hostname + "/*", zone_name: zone.name };
-};
-
 const updateWorkerExposure = (route?: WorkerRoute, privateWorker = false) => {
   const wranglerPath = resolve("wrangler.json");
   const config = JSON.parse(readFileSync(wranglerPath, "utf8")) as Record<string, unknown>;
@@ -267,14 +254,19 @@ const deployCleanupWorker = () => {
 /**
  * 主函数
  */
-const main = async () => {
+export const main = async () => {
   try {
     console.log("🚀 Starting deployment process...");
 
     validateEnvironment();
-    const emailCatchAllTarget = await getEmailCatchAllZone();
-    const workerRoute = await resolveWorkerRoute();
-    const workerExists = await hasWorkerScript(WORKER_NAME);
+    console.log("🔐 Checking Cloudflare API token and deployment access...");
+    const cloudflareAccess = await verifyCloudflareDeployAccess({
+      emailDomain: process.env.EMAIL_DOMAIN!,
+      customDomain: process.env.CUSTOM_DOMAIN,
+    });
+    const { emailCatchAllTarget, workerRoute } = cloudflareAccess;
+    const workerExists = cloudflareAccess.existingWorkerNames.has(WORKER_NAME);
+    console.log("✅ Cloudflare token is active and required account/Zone API access is available");
     await buildAndPreflightBeforeMigration(
       () => {
         updateWorkerExposure(workerRoute, !workerExists);
@@ -302,4 +294,6 @@ const main = async () => {
   }
 };
 
-main();
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  main();
+}

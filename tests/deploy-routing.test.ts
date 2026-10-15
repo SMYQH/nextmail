@@ -27,7 +27,9 @@ class MockCloudflare {
   }
 }
 
-mock.module("cloudflare", { defaultExport: MockCloudflare })
+class MockNotFoundError extends Error {}
+
+mock.module("cloudflare", { defaultExport: MockCloudflare, namedExports: { NotFoundError: MockNotFoundError } })
 const { configureEmailCatchAll, getEmailCatchAllZone } = await import("../scripts/deploy/cloudflare")
 
 test("subdomain EMAIL_DOMAIN cannot change the parent Zone catch-all", async t => {

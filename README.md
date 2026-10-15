@@ -46,3 +46,5 @@
 
 > 如需本地部署，请复制 `.env.deploy.example` 为本地 `.env.deploy` 并填写配置；`.env.deploy` 不应提交到 Git，部署令牌不能放入应用 `.env*` 文件。若在本地配置 `REPOSITORY_URL` 和 `GITHUB_TOKEN`，运行 `npm run deploy` 时会同步配置到 GitHub Actions Secrets，CI 仅从 Secrets 读取配置。
 
+> 如需清理 Cloudflare 上的 NextMail 部署资源，可运行 `npm run delete`；该命令会删除项目 D1 数据库及其中的数据，但不会修改 GitHub。详情见[部署说明](docs/deploy.md#清理-cloudflare-部署)。
+

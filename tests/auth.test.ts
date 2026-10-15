@@ -66,9 +66,15 @@ test("middleware authenticates HTTP and HTTPS session cookies with the request p
     const cookie = `${cookieName}=${token}`
     const session = await GET(new NextRequest(`${protocol}://localhost:8787/api/auth/session`, { headers: { cookie } }))
     assert.equal((await session.json() as { user: { id: string } }).user.id, "preview-user")
-    for (const route of ["/api/config", "/api/roles/init-emperor", "/en/profile", "/zh-CN/profile"]) {
+    for (const [route, method] of [
+      ["/api/config", "GET"],
+      ["/api/roles/init-emperor", "GET"],
+      ["/api/roles/init-emperor", "POST"],
+      ["/en/profile", "GET"],
+      ["/zh-CN/profile", "GET"],
+    ]) {
       const response = await middleware(new Request(`${protocol}://localhost:8787${route}`, {
-        method: route === "/api/roles/init-emperor" ? "POST" : "GET",
+        method,
         headers: { cookie },
       }))
       assert.equal(response.headers.get("x-middleware-next"), "1")

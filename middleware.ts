@@ -28,7 +28,7 @@ export async function middleware(request: Request) {
       pathname.startsWith('/api/shared') ||
       (pathname === '/api/roles/init-emperor' && request.method === 'GET')
     ) {
-      return NextResponse.next()
+      return NextResponse.next({ request: { headers: forwardedHeaders } })
     }
 
     if (!await getUserId(undefined, forwardedHeaders)) {

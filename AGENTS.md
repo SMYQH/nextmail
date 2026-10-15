@@ -66,8 +66,9 @@ NextMail: Next.js 15 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 | `npm run webhook-test-server` | Local webhook receiver                                       |
 | `npm run generate-test-data`  | Fixture Worker; invocation URL in `docs/develop.md`          |
 | `npm run generate:icons`      | Regenerate app icons                                         |
+| `npm run delete`              | Delete this project's named Cloudflare resources; D1 data is removed |
 
-- Remote commands: `npm run db:migrate-remote`, `npm run deploy`, `npm run deploy:worker`, `npm run deploy:email`, `npm run deploy:cleanup`. Run **only within authorized deployment scope**. Inspect migrations before remote application.
+- Remote commands: `npm run db:migrate-remote`, `npm run deploy`, `npm run deploy:worker`, `npm run deploy:email`, `npm run deploy:cleanup`, `npm run delete`. Run **only within authorized deployment scope**. `npm run delete` removes project-named Cloudflare resources and D1 data, but does not modify GitHub. Inspect migrations before remote application.
 - On Windows, prefer `pwsh`, fallback `powershell`. Use UTF-8 `.ps1` or `.py` files for long/quoting-sensitive scripts.
 - OpenNext Worker builds are not fully supported on Windows. Use Linux/WSL/CI; distinguish environment limits from application failures.
 - For bracketed PowerShell paths such as `app/[locale]/`, use `-LiteralPath` with file cmdlets.
@@ -123,8 +124,8 @@ Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare acco
 
 - When a tool/command produces high token cost and much irrelevant output, record it here. Next time, use a subagent to run it and ask  subagent for responsing with condense results .
 
-  **Tool:**
+  **Tool:** `exec_command`
 
-  **Command:**
+  **Command:** `cat docs/review.md docs/develop.md docs/deploy.md docs/usage.md package.json .github/workflows/deploy.yml` — large combined output; delegate documentation inventory and request a concise summary, then read relevant sections directly.
 
 - Codex: **Only GPT 6 Luna** may serve as a subagent. **Effort: Always max.**

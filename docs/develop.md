@@ -74,7 +74,7 @@ npm run preview:worker
 | `tests/email-receiver.test.ts`、`tests/safe-error.test.ts` | 收信持久化失败的显式拒绝、已保存邮件不受 Webhook 失败影响、日志脱敏 |
 | `tests/latest-request-gate.test.ts`、`tests/message-list-refresh.test.ts` | 过期请求响应隔离及刷新后保留已加载分页游标 |
 | `tests/shared-date.test.ts` | 分享页首屏日期一致、语言和时区格式及永久邮箱到期标记 |
-| `tests/password.test.ts`、`tests/webhook.test.ts`、`tests/deploy.test.ts`、`tests/deploy-routing.test.ts` | 密码兼容、Webhook 主机策略及签名、部署构建/迁移顺序、Email Routing Zone 选择 |
+| `tests/password.test.ts`、`tests/webhook.test.ts`、`tests/deploy.test.ts`、`tests/deploy-routing.test.ts`、`tests/deploy-delete.test.ts` | 密码兼容、Webhook 主机策略及签名、部署构建/迁移顺序、Email Routing Zone 选择、Cloudflare 清理范围及 Token 保护 |
 
 只运行相关套件时，在项目根目录执行，例如：
 
