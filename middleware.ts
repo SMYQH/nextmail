@@ -71,6 +71,12 @@ export async function middleware(request: Request) {
     return NextResponse.redirect(redirectURL)
   }
 
+  const legacyMailboxPath = `/${maybeLocale}/moe`
+  if (pathname === legacyMailboxPath || pathname === `${legacyMailboxPath}/`) {
+    url.pathname = `/${maybeLocale}/mailbox`
+    return NextResponse.redirect(url, 308)
+  }
+
   return NextResponse.next({ request: { headers: forwardedHeaders } })
 }
 

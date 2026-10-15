@@ -19,7 +19,7 @@ export function ActionButton({ isLoggedIn }: ActionButtonProps) {
     return (
       <Button 
         size="lg" 
-        onClick={() => router.push(`/${locale}/moe`)}
+        onClick={() => router.push(`/${locale}/mailbox`)}
         className="gap-2 px-8"
       >
         <Mail className="w-5 h-5" />
