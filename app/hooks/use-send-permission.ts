@@ -1,52 +1,86 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 
 interface SendPermissionResponse {
   canSend: boolean
   error?: string
   remainingEmails?: number
+  enabledDomains?: string[]
 }
 
-export function useSendPermission() {
-  const [canSend, setCanSend] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const [remainingEmails, setRemainingEmails] = useState<number | undefined>()
+interface PermissionState extends Omit<SendPermissionResponse, 'error'> {
+  address?: string
+  addressVersion: number
+  error?: string | null
+}
 
-  const checkPermission = async () => {
+export function useSendPermission(address?: string) {
+  const [loading, setLoading] = useState(false)
+  const [permission, setPermission] = useState<PermissionState>({ canSend: false, addressVersion: 0 })
+  const latestRequest = useRef(0)
+  const latestAddress = useRef(address)
+  const addressVersion = useRef(0)
+  if (latestAddress.current !== address) {
+    latestAddress.current = address
+    addressVersion.current += 1
+  }
+
+  const checkPermission = useCallback(async () => {
+    const requestId = ++latestRequest.current
+    const requestAddressVersion = addressVersion.current
     setLoading(true)
-    setError(null)
-    
+    const isCurrentRequest = () => (
+      requestId === latestRequest.current
+      && requestAddressVersion === addressVersion.current
+      && latestAddress.current === address
+    )
+
     try {
-      const response = await fetch('/api/emails/send-permission')
-      
+      const query = address ? `?address=${encodeURIComponent(address)}` : ''
+      const response = await fetch(`/api/emails/send-permission${query}`)
+
       if (!response.ok) {
         throw new Error('权限检查失败')
       }
 
       const data = await response.json() as SendPermissionResponse
-      setCanSend(data.canSend)
-      setRemainingEmails(data.remainingEmails)
-      
-      if (!data.canSend && data.error) {
-        setError(data.error)
-      }
+      if (!isCurrentRequest()) return
+      setPermission({
+        address,
+        addressVersion: requestAddressVersion,
+        canSend: data.canSend,
+        error: data.canSend ? null : data.error ?? null,
+        remainingEmails: data.remainingEmails,
+        enabledDomains: data.enabledDomains ?? [],
+      })
     } catch (err) {
-      setCanSend(false)
-      setError(err instanceof Error ? err.message : '权限检查失败')
+      if (!isCurrentRequest()) return
+      setPermission({
+        address,
+        addressVersion: requestAddressVersion,
+        canSend: false,
+        error: err instanceof Error ? err.message : '权限检查失败',
+        enabledDomains: [],
+      })
     } finally {
-      setLoading(false)
+      if (isCurrentRequest()) setLoading(false)
     }
-  }
+  }, [address])
 
   useEffect(() => {
     checkPermission()
-  }, [])
+  }, [checkPermission])
+
+  const currentPermission = permission.address === address
+    && permission.addressVersion === addressVersion.current
+    ? permission
+    : undefined
 
   return {
-    canSend,
+    canSend: currentPermission?.canSend ?? false,
     loading,
-    error,
-    remainingEmails,
+    error: currentPermission?.error ?? null,
+    remainingEmails: currentPermission?.remainingEmails,
+    enabledDomains: currentPermission?.enabledDomains ?? [],
     checkPermission
   }
-} 
+}

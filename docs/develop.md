@@ -72,6 +72,8 @@ npm run preview:worker
 | `tests/shared-data.test.ts` | 分享数据访问失效、不同邮箱隔离、隐藏发件及列表正文、分页排序与游标 |
 | `tests/config.test.ts`、`tests/private-cache.test.ts` | 配置失败恢复、请求去重、清理缓存失败时仍可退出登录 |
 | `tests/email-receiver.test.ts`、`tests/safe-error.test.ts` | 收信持久化失败的显式拒绝、已保存邮件不受 Webhook 失败影响、日志脱敏 |
+| `tests/catch-all-config.test.ts` | 域名配置校验、Catch-all 重命名期间收信、KV 保存失败后的重试及稳定邮箱关联 |
+| `tests/mailbox-controls.test.ts`、`tests/mailbox-events.test.ts` | Catch-all 置顶及删除保护、已读及删除统计、增量游标及延迟响应的统计隔离 |
 | `tests/latest-request-gate.test.ts`、`tests/message-list-refresh.test.ts` | 过期请求响应隔离及刷新后保留已加载分页游标 |
 | `tests/shared-date.test.ts` | 分享页首屏日期一致、语言和时区格式及永久邮箱到期标记 |
 | `tests/password.test.ts`、`tests/webhook.test.ts`、`tests/deploy.test.ts`、`tests/deploy-routing.test.ts`、`tests/deploy-delete.test.ts` | 密码兼容、Webhook 主机策略及签名、部署构建/迁移顺序、Email Routing Zone 选择、Cloudflare 清理范围及 Token 保护 |
@@ -100,7 +102,7 @@ Webhook 回归测试：请参阅 [Webhook 配置](deploy.md#webhook-setup)。如
 
 邮箱分页刷新：使用至少 60 个本地邮箱，滚动加载前两页，再点击刷新并继续滚动。已有邮箱应保留，后续分页不应重复，每个邮箱只出现一次。
 
-分享邮件：打开包含 HTML 和纯文本的本地分享邮箱，用 Tab、Enter 和空格选择消息。选择纯文本格式，等待超过 10 秒的自动刷新周期，格式和正文应保持不变。分别检查两种语言、明暗主题、移动端和较矮视口，以及减少动态效果设置；动画结束后截图。
+分享邮件：打开包含 HTML 和纯文本的本地分享邮箱，用 Tab、Enter 和空格选择消息。选择纯文本格式，等待超过 30 秒的自动刷新周期，格式和正文应保持不变。分别检查两种语言、明暗主题、移动端和较矮视口，以及减少动态效果设置；动画结束后截图。
 
 2. 测试邮件 worker：
 目前无法本地运行并测试，请使用 Wrangler 部署邮件 Worker 并测试；完整部署会在 OpenNext 应用 Worker 和两个独立 Worker 成功后，自动把 `EMAIL_DOMAIN` 的 Catch All 路由到 `email-receiver-worker`。
@@ -135,3 +137,30 @@ npm run generate-test-data
 - `scripts/`：自动化和测试脚本
 
 部署凭据请使用 `.env.deploy.example` 创建 `.env.deploy`，不要写入 `.env`、`.env.local` 或任何应用模式环境文件。Worker 构建会拒绝这些文件中的部署令牌。首次预览需在本地 KV 设置 `EMAIL_DOMAINS`，未设置时创建邮箱返回 503。HTTP 预览支持普通会话 Cookie；中间件根据请求协议补充缺失的 `X-Forwarded-Proto`。
+
+## 多域名功能回归
+
+先运行 `npm run db:migrate-local`。迁移 `./drizzle/0020_user_email_domain_access.sql` 保存用户域名权限；`./drizzle/0021_message_read_tracking.sql` 新增邮件已读状态及统计索引；`./drizzle/0022_stable_mail_delivery.sql` 保存 Catch-all 的固定邮箱关联，并为现有及新邮件建立数据库写入序号。现有邮件默认未读，现有用户默认继承全部配置域名。写入序号由插入触发器生成，不依赖邮件时间或随机 ID；删除邮件会清理对应记录，但不会重用已提交的序号。
+
+运行以下聚焦检查，再执行完整的 lint、TypeScript、单元测试和 Worker 构建：
+
+```sh
+node --import tsx --experimental-test-module-mocks --test tests/catch-all-config.test.ts tests/mailbox-controls.test.ts tests/email-receiver.test.ts tests/routes.test.ts tests/message-list-refresh.test.ts tests/mailbox-events.test.ts
+```
+
+浏览器中分别检查 `/en/mailbox`、`/zh-CN/mailbox` 和对应 profile 页面。使用两个接收域名，确认 Catch-all 开关、前缀、停用显示、域名筛选及每域 Resend 设置。为普通用户仅允许一个域名，再登录该用户验证创建选项和 API 拒绝行为。打开未读邮件后，标题应恢复普通字重且计数减少一次。
+
+发送超过一页新邮件，等待至少 30 秒，确认增量轮询逐页获取全部新邮件，旧页分页仍可用。隐藏页面后确认没有轮询请求，恢复后确认继续更新。以键盘操作域名筛选及配置控件，检查明暗主题、390 × 640 短移动视口和减少动态效果模式；动画结束后截图。单元测试及本地模拟不能证明生产 Cloudflare 收件、Resend 投递或 Webhook 服务可用。
+
+
+邮箱统计竞态：打开只有一封未读邮件的邮箱，再加入第二封未读邮件。先刷新左侧邮箱列表，确认统计为 `2 / 2`，再等待邮件轮询；统计必须仍为 `2 / 2`。重新开始并交换刷新与轮询顺序，再连续等待空增量轮询，确认不会重复累计。
+
+置顶邮箱分页：先只加载 Catch-all 邮箱，在另一会话中新增 21 个普通邮箱，再刷新并滚动到底。全部 22 个邮箱应可见且没有重复；已有普通邮箱分页重叠时，仍需保留原有分页末尾。
+
+配置错误语言：分别在 `/en/profile` 和 `/zh-CN/profile` 保存无效 Catch-all 前缀、已占用地址和空的已启用邮箱名，确认提示使用当前语言。模拟未知服务端错误或请求失败时，应显示当前语言的通用保存失败提示，不显示服务端原始文本。
+
+Catch-all 保存恢复：在重命名的数据库写入成功、KV 尚未保存时投递未知地址邮件，必须进入原邮箱。模拟首次保存或重命名时的 KV 写入失败，再提交相同配置，必须复用原邮箱并成功保存；原邮件保留。失败的旧配置仍启用时，收件也必须能通过固定关联进入原邮箱。
+
+延迟收件：首次快照后插入时间相同但 ID 更小、或时间更早的邮件；增量轮询必须收到它们，列表仍按邮件时间显示。超过一页时逐页排空，插入新邮件及删除全部旧邮件后继续检查，不能遗漏或重复显示。
+
+跨会话已读：从两封未读邮件开始，在另一会话读取其中一封。等待当前页面轮询显示 `1 / 2`，再打开本页仍加粗的同一行，计数必须保持 `1 / 2`；打开另一封才变为 `0 / 2`。分别检查英文、中文及桌面、移动视口。

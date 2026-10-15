@@ -79,18 +79,20 @@ const updateDatabaseConfig = (dbId: string) => {
 const updateKVConfig = (namespaceId: string) => {
   console.log(`📝 Updating KV namespace ID (${namespaceId}) in configurations...`);
 
-  // KV命名空间只在主wrangler.json中使用
-  const wranglerPath = resolve("wrangler.json");
-  if (existsSync(wranglerPath)) {
+  // 主应用与邮件接收 Worker 共享网站配置。
+  for (const filename of ["wrangler.json", "wrangler.email.json"]) {
+    const wranglerPath = resolve(filename);
+    if (!existsSync(wranglerPath)) continue;
     try {
       const json = JSON.parse(readFileSync(wranglerPath, "utf-8"));
-      if (json.kv_namespaces && json.kv_namespaces.length > 0) {
-        json.kv_namespaces[0].id = namespaceId;
-      }
+      json.kv_namespaces ??= [];
+      const binding = json.kv_namespaces.find((entry: { binding: string }) => entry.binding === "SITE_CONFIG");
+      if (binding) binding.id = namespaceId;
+      else json.kv_namespaces.push({ binding: "SITE_CONFIG", id: namespaceId });
       writeFileSync(wranglerPath, JSON.stringify(json, null, 2));
-      console.log(`✅ Updated KV namespace ID in wrangler.json`);
+      console.log(`✅ Updated KV namespace ID in ${filename}`);
     } catch (error) {
-      console.error(`❌ Failed to update wrangler.json:`, error);
+      console.error(`❌ Failed to update ${filename}:`, error);
       throw error;
     }
   }

@@ -10,6 +10,7 @@ interface Config {
   defaultRole: Exclude<Role, typeof ROLES.EMPEROR>
   emailDomains: string
   emailDomainsArray: string[]
+  availableEmailDomains: string[]
   adminContact: string
   maxEmails: number
 }
@@ -41,12 +42,18 @@ export const useConfigStore = create<ConfigStore>((set, get) => ({
         if (attempt < 2) await new Promise(resolve => setTimeout(resolve, 500 * 2 ** attempt))
       }
       if (!res?.ok) throw new Error("获取配置失败")
-      const data = await res.json() as Config
+      const data = await res.json() as Partial<Config> & Pick<Config, "emailDomains">
+      const emailDomainsArray = normalizeEmailDomains(data.emailDomains)
       set({
         config: {
           defaultRole: data.defaultRole || ROLES.CIVILIAN,
           emailDomains: data.emailDomains,
-          emailDomainsArray: normalizeEmailDomains(data.emailDomains),
+          emailDomainsArray,
+          availableEmailDomains: normalizeEmailDomains(
+            Array.isArray(data.availableEmailDomains)
+              ? data.availableEmailDomains.join(",")
+              : data.emailDomains,
+          ),
           adminContact: data.adminContact || "",
           maxEmails: Number(data.maxEmails) || EMAIL_CONFIG.MAX_ACTIVE_EMAILS
         },

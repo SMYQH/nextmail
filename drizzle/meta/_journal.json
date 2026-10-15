@@ -141,6 +141,27 @@
       "when": 1788588535620,
       "tag": "0019_review_fixes",
       "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792061098437,
+      "tag": "0020_user_email_domain_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792061272689,
+      "tag": "0021_message_read_tracking",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792072274092,
+      "tag": "0022_stable_mail_delivery",
+      "breakpoints": true
     }
   ]
 }

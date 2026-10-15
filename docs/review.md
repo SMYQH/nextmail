@@ -4,6 +4,36 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 101 | Sending setup still describes one global service switch and key. | Resolved locally: instructions match per-domain configuration. |
+| 100 | Daily quota reset omits its timezone. | Resolved locally: documentation specifies UTC. |
+| 99 | Webhook test instructions overstate logged message details. | Resolved locally: documentation matches subject-only logging. |
+| 98 | Manual refresh documentation overstates synchronization of cached older pages. | Resolved locally: cache limits and page reload behavior are documented. |
+| 97 | Deployment documentation obscures database ID override behavior. | Resolved locally: target verification and migration implications are documented. |
+| 96 | Polling cursor instructions do not distinguish ordinary pagination snapshots. | Resolved locally: initialization and advancement rules match the client. |
+| 95 | The task reference does not describe its adaptation scope. | Resolved locally: scope and verification limits are documented. |
+| 94 | Development coverage omits new configuration and mailbox tests. | Resolved locally: coverage inventory and focused command are current. |
+| 93 | Configuration inventory omits Catch-all and domain sending settings. | Resolved locally: current settings are documented. |
+| 92 | Tunnel instructions rely on an undocumented package runner. | Resolved locally: instructions use the installed executable. |
+| 91 | API and sharing examples use an obsolete Pages hostname. | Resolved locally: examples use a documented application-host placeholder. |
+| 90 | Configuration response documentation omits domain access and Catch-all fields. | Resolved locally: response fields and privileges are documented. |
+| 89 | Mailbox filtering is documented as a response field rather than a query parameter. | Resolved locally: parameter and response descriptions are corrected. |
+| 88 | Mailbox creation requirements are ambiguous. | Resolved locally: expiry and domain requirements are explicit. |
+| 87 | Deployment help links use missing anchors. | Resolved locally: stable anchors resolve existing help links. |
+| 86 | Deployment permissions conflate website and email zones. | Resolved locally: permission scopes cover both configured zones. |
+| 85 | Head refreshes advance polling past late arrivals outside the first page. | Resolved locally: late-arrival refresh and pagination browser checks pass; remote behavior unverified. |
+| 84 | Delayed responses overwrite newer mailbox counts. | Resolved locally: snapshot ordering and targeted revalidation pass focused tests and browser checks. |
+| 83 | Refresh retains Catch-all mailboxes after they become hidden. | Resolved locally: hidden rows disappear in both locales on desktop and mobile. |
+| 82 | Stale Catch-all addresses expose registered mailboxes to destructive deletion. | Resolved locally: registered identities preserve mailboxes and messages in regression checks; remote behavior unverified. |
+| 81 | Deleting a stale unread message subtracts unread counts twice. | Resolved locally: authoritative deletion counts pass browser checks in both locales on desktop and mobile. |
+| 80 | Cross-session reads can subtract unread counts twice. | Resolved locally: authoritative counts pass browser checks in both locales on desktop and mobile. |
+| 79 | Catch-all creation cannot recover after a configuration-store failure. | Resolved locally: retry regressions preserve the mailbox; remote behavior unverified. |
+| 78 | Incremental cursors omit late commits behind delivery timestamps or IDs. | Resolved locally: late arrival, pagination, deletion, and migration checks pass; remote behavior unverified. |
+| 77 | Catch-all renames can silently lose deliveries during configuration updates. | Resolved locally: concurrent delivery and save failure regressions pass; live Cloudflare delivery unverified. |
+| 76 | Website configuration errors appear in the wrong language. | Resolved locally: validation and fallback messages pass browser checks in both locales. |
+| 75 | Message polls double-count arrivals already included in mailbox statistics. | Resolved locally: refresh and poll ordering checks preserve exact counts. |
+| 74 | Pinned Catch-all overlap can make ordinary mailbox pages unreachable. | Resolved locally: pagination regression and desktop/mobile browser checks pass. |
+| 73 | Empty mailbox cursors can skip concurrent arrivals. | Resolved locally: concurrent-arrival regression checks pass. |
+| 72 | Catch-all infrastructure lookup failures silently discard incoming mail. | Resolved locally: failure regression checks reject delivery; live Cloudflare delivery unverified. |
 | 71 | GET emperor claims can be CSRF-triggered. | Accepted by user. |
 | 70 | Deployment preflight rejects valid targets because of stale local Worker routes. | Resolved locally: effective deployment targets pass regression checks for fresh and existing Workers; remote deployment unverified. |
 | 69 | Cleanup tests depend on deployment-specific Wrangler configuration. | Resolved locally: isolated Wrangler fixtures pass cleanup and configured-route regression checks. |

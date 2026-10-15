@@ -29,7 +29,11 @@
     "deleteSuccess": "Email deleted successfully",
     "deleteFailed": "Failed to delete email",
     "error": "Error",
-    "success": "Success"
+    "success": "Success",
+    "domainFilter": "Filter mailboxes by domain",
+    "allDomains": "All",
+    "messageStats": "{unread} unread / {total} messages",
+    "catchAll": "Catch-all"
   },
   "create": {
     "configLoading": "Loading email domains…",
@@ -40,6 +44,7 @@
     "namePlaceholder": "Leave empty for random generation",
     "invalidName": "Enter a valid email prefix (up to 64 characters, without spaces or @).",
     "nameTaken": "This email address is already in use.",
+    "domainUnavailable": "You are not allowed to create mailboxes on this domain.",
     "domain": "Domain",
     "domainPlaceholder": "Select a domain",
     "expiryTime": "Validity Period",
@@ -50,7 +55,8 @@
     "create": "Create",
     "creating": "Creating...",
     "success": "Email created successfully",
-    "failed": "Failed to create email"
+    "failed": "Failed to create email",
+    "noDomains": "No email domains are available. Contact the administrator."
   },
   "messages": {
     "received": "Received",
@@ -81,6 +87,8 @@
     "sending": "Sending...",
     "success": "Email sent successfully",
     "failed": "Failed to send email",
+    "fromPrefixPlaceholder": "Sender address prefix",
+    "catchAllFromDescription": "The Emperor can change the sender prefix for this Catch-all message.",
     "dailyLimitReached": "Daily sending limit reached",
     "dailyLimit": "Daily Limit: {count}/{max}",
     "dailyLimitUnit": "emails/day"

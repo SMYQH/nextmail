@@ -12,6 +12,7 @@ import { getUserId } from "@/lib/apiKey"
 import { getUserRole } from "@/lib/auth"
 import { ROLES } from "@/lib/permissions"
 import { normalizeEmailDomains } from "@/lib/email-domains"
+import { getAvailableEmailDomains } from "@/lib/user-email-domain-access"
 import { isValidMailboxName } from "@/lib/mailbox-name"
 
 
@@ -77,6 +78,14 @@ export async function POST(request: Request) {
     const mailboxName = typeof name === "string" ? name.trim() : ""
     if (mailboxName && !isValidMailboxName(mailboxName)) {
       return NextResponse.json({ error: "Invalid email prefix" }, { status: 400 })
+    }
+
+    const availableDomains = await getAvailableEmailDomains(userId, domains, userRole === ROLES.EMPEROR)
+    if (!availableDomains.includes(normalizedDomain)) {
+      return NextResponse.json(
+        { error: "Email domain is not available to this user" },
+        { status: 403 }
+      )
     }
 
     const address = `${mailboxName || nanoid(8)}@${normalizedDomain}`.toLowerCase()

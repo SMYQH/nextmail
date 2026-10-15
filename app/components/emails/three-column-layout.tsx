@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useCallback, useEffect, useState } from "react"
 import { useTranslations } from "next-intl"
 import { EmailList } from "./email-list"
 import { MessageListContainer } from "./message-list-container"
@@ -11,10 +11,13 @@ import { useCopy } from "@/hooks/use-copy"
 import { useSendPermission } from "@/hooks/use-send-permission"
 import { Copy, Inbox, MailOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
+import { useUserRole } from "@/hooks/use-user-role"
+import { ROLES } from "@/lib/permissions"
 
 interface Email {
   id: string
   address: string
+  isCatchAll?: boolean
 }
 
 export function ThreeColumnLayout() {
@@ -23,9 +26,20 @@ export function ThreeColumnLayout() {
   const [selectedEmail, setSelectedEmail] = useState<Email | null>(null)
   const [selectedMessageId, setSelectedMessageId] = useState<string | null>(null)
   const [selectedMessageType, setSelectedMessageType] = useState<'received' | 'sent'>('received')
+  const [selectedWasUnread, setSelectedWasUnread] = useState(false)
+  const handleMessageRead = useCallback(() => setSelectedWasUnread(false), [])
   const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const [isDesktop, setIsDesktop] = useState(true)
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 1024px)')
+    const update = () => setIsDesktop(media.matches)
+    update()
+    media.addEventListener('change', update)
+    return () => media.removeEventListener('change', update)
+  }, [])
   const { copyToClipboard } = useCopy()
-  const { canSend: canSendEmails } = useSendPermission()
+  const { role } = useUserRole()
+  const { canSend: canSendEmails } = useSendPermission(selectedEmail?.address)
 
   const columnClass = "fluent-pane overflow-hidden flex flex-col"
   const headerClass = "fluent-pane-header px-3 flex items-center justify-between shrink-0"
@@ -44,9 +58,10 @@ export function ThreeColumnLayout() {
     copyToClipboard(selectedEmail?.address || "")
   }
 
-  const handleMessageSelect = (messageId: string | null, messageType: 'received' | 'sent' = 'received') => {
+  const handleMessageSelect = (messageId: string | null, messageType: 'received' | 'sent' = 'received', wasUnread = false) => {
     setSelectedMessageId(messageId)
     setSelectedMessageType(messageType)
+    setSelectedWasUnread(wasUnread)
   }
 
   const handleSendSuccess = () => {
@@ -56,7 +71,7 @@ export function ThreeColumnLayout() {
   return (
     <div className="pb-5 pt-20 h-full flex flex-col">
       {/* 桌面端三栏布局 */}
-      <div className="fluent-mail-workspace hidden lg:grid grid-cols-12 h-full min-h-0">
+      {isDesktop && <div className="fluent-mail-workspace hidden lg:grid grid-cols-12 h-full min-h-0">
         <div className={cn("col-span-3", columnClass)}>
           <div className={headerClass}>
             <h2 className={titleClass}>{t("myEmails")}</h2>
@@ -86,6 +101,7 @@ export function ThreeColumnLayout() {
                   <SendDialog
                     emailId={selectedEmail.id}
                     fromAddress={selectedEmail.address}
+                    allowCustomFrom={Boolean(selectedEmail.isCatchAll && role === ROLES.EMPEROR)}
                     onSendSuccess={handleSendSuccess}
                   />
                 )}
@@ -125,6 +141,8 @@ export function ThreeColumnLayout() {
                 emailId={selectedEmail.id}
                 messageId={selectedMessageId}
                 messageType={selectedMessageType}
+                wasUnread={selectedWasUnread}
+                onRead={handleMessageRead}
                 onClose={() => setSelectedMessageId(null)}
               />
             </div>
@@ -136,10 +154,10 @@ export function ThreeColumnLayout() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
       {/* 移动端单栏布局 */}
-      <div className="lg:hidden h-full min-h-0">
+      {!isDesktop && <div className="lg:hidden h-full min-h-0">
         <div className={cn("h-full", columnClass)}>
           {mobileView === "list" && (
             <>
@@ -179,6 +197,7 @@ export function ThreeColumnLayout() {
                     <SendDialog
                       emailId={selectedEmail.id}
                       fromAddress={selectedEmail.address}
+                      allowCustomFrom={Boolean(selectedEmail.isCatchAll && role === ROLES.EMPEROR)}
                       onSendSuccess={handleSendSuccess}
                     />
                   )}
@@ -212,13 +231,15 @@ export function ThreeColumnLayout() {
                   emailId={selectedEmail.id}
                   messageId={selectedMessageId}
                   messageType={selectedMessageType}
+                  wasUnread={selectedWasUnread}
+                  onRead={handleMessageRead}
                   onClose={() => setSelectedMessageId(null)}
                 />
               </div>
             </div>
           )}
         </div>
-      </div>
+      </div>}
     </div>
   )
 }

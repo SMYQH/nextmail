@@ -2,11 +2,13 @@ import { safeErrorMetadata } from "@/lib/safe-error"
 import { PERMISSIONS } from "@/lib/permissions"
 import { NextResponse } from "next/server"
 import { createDb } from "@/lib/db"
-import { emails, messages } from "@/lib/schema"
-import { eq, and, lt, or, sql, ne, isNull } from "drizzle-orm"
-import { encodeCursor, decodeCursor } from "@/lib/cursor"
+import { catchAllMailboxes, emails, messages, messageArrivals } from "@/lib/schema"
+import { eq, and, lt, or, sql, ne, isNull, gt, asc } from "drizzle-orm"
+import { encodeCursor, decodeCursor, encodeArrivalCursor, decodeArrivalCursor } from "@/lib/cursor"
 import { getUserId } from "@/lib/apiKey"
 import { checkBasicSendPermission } from "@/lib/send-permissions"
+import { getCloudflareContext } from "@opennextjs/cloudflare"
+import { CATCHALL_EMAIL_KEY, parseCatchAllEmailConfig } from "@/lib/catch-all"
 
 
 export async function DELETE(
@@ -31,6 +33,14 @@ export async function DELETE(
         { error: "邮箱不存在或无权限删除" },
         { status: 403 }
       )
+    }
+    const registered = await db.query.catchAllMailboxes.findFirst({ where: eq(catchAllMailboxes.emailId, id) })
+    if (registered) {
+      return NextResponse.json({ error: "Manage Catch-all mailboxes in website settings" }, { status: 403 })
+    }
+    const catchAll = parseCatchAllEmailConfig(await getCloudflareContext().env.SITE_CONFIG.get(CATCHALL_EMAIL_KEY))
+    if (Object.values(catchAll).some(config => config.address === email.address.toLowerCase())) {
+      return NextResponse.json({ error: "Manage Catch-all mailboxes in website settings" }, { status: 403 })
     }
     await db.delete(messages)
       .where(eq(messages.emailId, id))
@@ -57,6 +67,7 @@ export async function GET(
   const { searchParams } = new URL(request.url)
   const cursorStr = searchParams.get('cursor')
   const messageType = searchParams.get('type')
+  const since = searchParams.get('since')
 
   try {
     const db = createDb()
@@ -98,10 +109,41 @@ export async function GET(
           )
     )
 
-    const totalResult = await db.select({ count: sql<number>`count(*)` })
-      .from(messages)
-      .where(baseConditions)
-    const totalCount = Number(totalResult[0].count)
+    const getStatistics = async () => {
+      const [row] = await db.select({
+        count: sql<number>`count(*)`,
+        unread: sql<number>`sum(case when ${messages.isRead} = 0 then 1 else 0 end)`,
+      }).from(messages).where(baseConditions)
+      return { total: Number(row?.count || 0), unread: Number(row?.unread || 0) }
+    }
+
+    const orderByTime = messageType === 'sent' ? messages.sentAt : messages.receivedAt
+    if (since) {
+      const sequence = decodeArrivalCursor(since)
+      const rows = await db.select({
+        id: messages.id, emailId: messages.emailId, type: messages.type,
+        fromAddress: messages.fromAddress, toAddress: messages.toAddress,
+        subject: messages.subject, isRead: messages.isRead,
+        receivedAt: messages.receivedAt, sentAt: messages.sentAt,
+        sequence: messageArrivals.sequence,
+      })
+        .from(messageArrivals).innerJoin(messages, eq(messageArrivals.messageId, messages.id))
+        .where(and(baseConditions, gt(messageArrivals.sequence, sequence)))
+        .orderBy(asc(messageArrivals.sequence)).limit(PAGE_SIZE + 1)
+      const page = rows.slice(0, PAGE_SIZE)
+      const latest = page.at(-1)
+      return NextResponse.json({
+        messages: page.map(serializeMessage),
+        ...await getStatistics(),
+        latestCursor: encodeArrivalCursor(latest?.sequence ?? sequence),
+        hasMore: rows.length > PAGE_SIZE,
+      })
+    }
+
+    // Capture before the message snapshot; concurrent commits may replay, but cannot be skipped.
+    const [watermark] = !cursorStr ? await db.select({ sequence: sql<number>`coalesce(max(${messageArrivals.sequence}), 0)` })
+      .from(messageArrivals).innerJoin(messages, eq(messageArrivals.messageId, messages.id))
+      .where(baseConditions) : []
 
     const conditions = [baseConditions]
 
@@ -119,9 +161,8 @@ export async function GET(
       )
     }
 
-    const orderByTime = messageType === 'sent' ? messages.sentAt : messages.receivedAt
-    
     const results = await db.query.messages.findMany({
+      columns: { content: false, html: false },
       where: and(...conditions),
       orderBy: (messages, { desc }) => [
         desc(orderByTime),
@@ -142,18 +183,10 @@ export async function GET(
     const messageList = hasMore ? results.slice(0, PAGE_SIZE) : results
 
     return NextResponse.json({ 
-      messages: messageList.map(msg => ({
-        id: msg.id,
-        from_address: msg?.fromAddress,
-        to_address: msg?.toAddress,
-        subject: msg.subject,
-        content: msg.content,
-        html: msg.html,
-        sent_at: msg.sentAt?.getTime(),
-        received_at: msg.receivedAt?.getTime()
-      })),
+      messages: messageList.map(serializeMessage),
+      latestCursor: encodeArrivalCursor(Number(watermark?.sequence || 0)),
       nextCursor,
-      total: totalCount
+      ...(!cursorStr ? await getStatistics() : {}),
     })
   } catch (error) {
     console.error('Failed to fetch messages:', safeErrorMetadata(error))
@@ -161,5 +194,17 @@ export async function GET(
       { error: "Failed to fetch messages" },
       { status: 500 }
     )
+  }
+}
+
+function serializeMessage(msg: Omit<typeof messages.$inferSelect, "content" | "html">) {
+  return {
+    id: msg.id,
+    from_address: msg.fromAddress,
+    to_address: msg.toAddress,
+    subject: msg.subject,
+    sent_at: msg.sentAt.getTime(),
+    received_at: msg.receivedAt.getTime(),
+    is_read: msg.isRead,
   }
 }

@@ -29,7 +29,11 @@
     "deleteSuccess": "邮箱已删除",
     "deleteFailed": "删除邮箱失败",
     "error": "错误",
-    "success": "成功"
+    "success": "成功",
+    "domainFilter": "按域名筛选邮箱",
+    "allDomains": "全部",
+    "messageStats": "{unread} 封未读 / 共 {total} 封邮件",
+    "catchAll": "Catch-all 邮箱"
   },
   "create": {
     "configLoading": "正在加载邮箱域名…",
@@ -40,6 +44,7 @@
     "namePlaceholder": "留空则随机生成",
     "invalidName": "请输入有效的邮箱前缀，最多 64 个字符，不能包含空格或 @。",
     "nameTaken": "该邮箱地址已被使用。",
+    "domainUnavailable": "您没有权限使用此域名创建邮箱。",
     "domain": "域名",
     "domainPlaceholder": "选择域名",
     "expiryTime": "有效期",
@@ -50,7 +55,8 @@
     "create": "创建",
     "creating": "创建中...",
     "success": "邮箱创建成功",
-    "failed": "创建邮箱失败"
+    "failed": "创建邮箱失败",
+    "noDomains": "没有可用的邮箱域名，请联系管理员。"
   },
   "messages": {
     "received": "收件箱",
@@ -81,6 +87,8 @@
     "sending": "发送中...",
     "success": "邮件发送成功",
     "failed": "发送邮件失败",
+    "fromPrefixPlaceholder": "发件地址前缀",
+    "catchAllFromDescription": "皇帝可以修改此 Catch-all 邮箱的发件地址前缀。",
     "dailyLimitReached": "已达每日发送上限",
     "dailyLimit": "每日限额：{count}/{max}",
     "dailyLimitUnit": "封/天"

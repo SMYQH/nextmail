@@ -1,9 +1,10 @@
 import { safeErrorMetadata } from "@/lib/safe-error"
 import { createDb } from "@/lib/db"
-import { users, userRoles, roles } from "@/lib/schema"
-import { eq, like, or, sql } from "drizzle-orm"
+import { users, userRoles, roles, userEmailDomainAccess } from "@/lib/schema"
+import { eq, inArray, like, or, sql } from "drizzle-orm"
 import { checkPermission } from "@/lib/auth"
 import { PERMISSIONS, ROLES } from "@/lib/permissions"
+import { parseUserAllowedEmailDomains } from "@/lib/user-email-domain-access"
 
 
 export async function GET(request: Request) {
@@ -59,6 +60,17 @@ export async function GET(request: Request) {
       .limit(pageSize)
       .offset((page - 1) * pageSize)
 
+    const accessRows = userList.length
+      ? await db
+          .select({ userId: userEmailDomainAccess.userId, domains: userEmailDomainAccess.domains })
+          .from(userEmailDomainAccess)
+          .where(inArray(userEmailDomainAccess.userId, userList.map(user => user.id)))
+      : []
+    const domainAccessByUser = new Map(accessRows.map(access => [
+      access.userId,
+      parseUserAllowedEmailDomains(access.domains),
+    ]))
+
     return Response.json({
       users: userList.map((u) => ({
         id: u.id,
@@ -67,6 +79,7 @@ export async function GET(request: Request) {
         email: u.email,
         image: u.image,
         role: u.role || null,
+        allowedDomains: u.role === ROLES.EMPEROR ? null : domainAccessByUser.get(u.id) ?? null,
       })),
       total,
       page,

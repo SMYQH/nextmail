@@ -12,7 +12,7 @@ interface MessageListContainerProps {
     id: string
     address: string
   }
-  onMessageSelect: (messageId: string | null, messageType?: 'received' | 'sent') => void
+  onMessageSelect: (messageId: string | null, messageType?: 'received' | 'sent', wasUnread?: boolean) => void
   selectedMessageId?: string | null
   refreshTrigger?: number
 }
@@ -20,7 +20,7 @@ interface MessageListContainerProps {
 export function MessageListContainer({ email, onMessageSelect, selectedMessageId, refreshTrigger }: MessageListContainerProps) {
   const t = useTranslations("emails.messages")
   const [activeTab, setActiveTab] = useState<'received' | 'sent'>('received')
-  const { canSend: canSendEmails } = useSendPermission()
+  const { canSend: canSendEmails } = useSendPermission(email.address)
 
   const handleTabChange = (tabId: string) => {
     setActiveTab(tabId as 'received' | 'sent')
