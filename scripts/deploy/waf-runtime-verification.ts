@@ -10,8 +10,7 @@ const REQUEST_TIMEOUT_MS = 8_000
 async function assertUnauthenticatedApiResponse(response: Response, url: string) {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
   const body = await response.text()
-  const looksLikeChallenge = response.headers.get("cf-mitigated") === "challenge" ||
-    /challenge-platform|cf-chl-|just a moment/i.test(body)
+  const looksLikeChallenge = response.headers.get("cf-mitigated") === "challenge"
 
   if (looksLikeChallenge) {
     throw new Error(`Cloudflare still challenged the OpenAPI verification request to ${url}.`)
@@ -35,9 +34,10 @@ async function assertUnauthenticatedApiResponse(response: Response, url: string)
 
 async function assertFrontendResponse(response: Response, url: string) {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
-  const body = await response.text()
-  const looksLikeChallenge = response.headers.get("cf-mitigated") === "challenge" ||
-    /challenge-platform|cf-chl-|just a moment/i.test(body)
+  await response.text()
+  // Cloudflare can inject detection scripts into successful application HTML.
+  // Its documented challenge header distinguishes a blocking Challenge Page.
+  const looksLikeChallenge = response.headers.get("cf-mitigated") === "challenge"
 
   if (looksLikeChallenge) {
     throw new Error(`Cloudflare still challenged the front-end verification request to ${url}.`)
@@ -64,12 +64,11 @@ async function requestWithEdgeRetries(
         ...init,
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       })
-      const responseBody = await response.clone().text()
-      const challenge = response.headers.get("cf-mitigated") === "challenge" ||
-        /challenge-platform|cf-chl-|just a moment/i.test(responseBody)
+      const challenge = response.headers.get("cf-mitigated") === "challenge"
       const transient = challenge || isTransientEdgeResponse(response.status)
 
       if (!transient || attempt === MAX_ATTEMPTS - 1) return response
+      await response.body?.cancel()
     } catch (error) {
       if (attempt === MAX_ATTEMPTS - 1) {
         throw new Error(`OpenAPI WAF verification could not reach ${url} after ${MAX_ATTEMPTS} attempts (${error instanceof Error ? error.name : "network error"}).`)

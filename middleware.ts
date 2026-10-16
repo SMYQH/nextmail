@@ -2,7 +2,7 @@ import { NextResponse } from "next/server"
 import { i18n, type Locale } from "@/i18n/config"
 import { PERMISSIONS } from "@/lib/permissions"
 import { Permission } from "@/lib/permissions"
-import { getUserId } from "@/lib/apiKey"
+import { getRequestIdentity, identityHasPermission } from "@/lib/apiKey"
 
 const API_PERMISSIONS: Record<string, Permission> = {
   '/api/emails': PERMISSIONS.MANAGE_EMAIL,
@@ -31,7 +31,8 @@ export async function middleware(request: Request) {
       return NextResponse.next({ request: { headers: forwardedHeaders } })
     }
 
-    if (!await getUserId(undefined, forwardedHeaders)) {
+    const identity = await getRequestIdentity(forwardedHeaders)
+    if (!identity) {
       return NextResponse.json(
         { error: "未授权" },
         { status: 401 }
@@ -44,9 +45,7 @@ export async function middleware(request: Request) {
 
     for (const [route, permission] of Object.entries(API_PERMISSIONS)) {
       if (pathname.startsWith(route)) {
-        const hasAccess = await getUserId(permission, forwardedHeaders)
-
-        if (!hasAccess) {
+        if (!identityHasPermission(identity, permission)) {
           return NextResponse.json(
             { error: "权限不足" },
             { status: 403 }

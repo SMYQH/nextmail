@@ -214,6 +214,23 @@ test("post-deployment verification fails clearly when Cloudflare still serves a 
   )
 })
 
+test("front-end verification accepts successful HTML with Cloudflare detection scripts", async () => {
+  const requests: string[] = []
+  const fetchMock: typeof fetch = async input => {
+    requests.push(String(input))
+    if (String(input).endsWith("/en")) {
+      return new Response('<!doctype html><html><body>NextMail<script src="/cdn-cgi/challenge-platform/scripts/precursor/main.js"></script></body></html>', {
+        status: 200,
+        headers: { "content-type": "text/html" },
+      })
+    }
+    return new Response(JSON.stringify({ error: "未授权" }), { status: 401, headers: { "content-type": "application/json" } })
+  }
+
+  await verifyOpenApiHttpBehavior({ hostname, zoneId }, secret, fetchMock, async () => assert.fail("successful HTML must not be retried"))
+  assert.equal(requests.length, 3)
+})
+
 test("post-deployment HTTP verification retries transient edge responses a bounded number of times", async () => {
   let attempts = 0
   const delays: number[] = []

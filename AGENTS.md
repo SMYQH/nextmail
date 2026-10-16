@@ -128,4 +128,6 @@ Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare acco
 
   **Command:** `cat docs/review.md docs/develop.md docs/deploy.md docs/usage.md package.json .github/workflows/deploy.yml` — large combined output; delegate documentation inventory and request a concise summary, then read relevant sections directly.
 
+  **Command:** Broad `rg -n` searches in `node_modules/wrangler/wrangler-dist/cli.js` — embedded minified modules can emit very large lines; delegate bounded lookups and request condensed results.
+
 - Codex: **Only GPT 6 Luna** may serve as a subagent. **Effort: Always max.**

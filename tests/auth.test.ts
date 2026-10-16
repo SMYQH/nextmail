@@ -39,7 +39,7 @@ const { middleware } = await import("../middleware")
 
 beforeEach(t => {
   assert.ok("mock" in t)
-  sqlite.exec("DELETE FROM user; DELETE FROM role")
+  sqlite.exec("DELETE FROM api_keys; DELETE FROM user; DELETE FROM role")
   config.clear()
   defaultRoleLookupBarrier = undefined
   const network = t.mock.method(globalThis, "fetch", async () => {
@@ -84,6 +84,47 @@ test("middleware authenticates HTTP and HTTPS session cookies with the request p
     const unauthorized = await middleware(new Request(`${protocol}://localhost:8787/api/config`))
     assert.equal(unauthorized.status, 401)
   }
+})
+
+test("middleware resolves a session once per request and observes role revocation on the next request", async t => {
+  sqlite.exec("INSERT INTO user(id,username) VALUES('preview-user','preview'); INSERT INTO role(id,name) VALUES('duke','duke'),('civilian','civilian'); INSERT INTO user_role(user_id,role_id) VALUES('preview-user','duke')")
+  const cookieName = "__Secure-authjs.session-token"
+  const token = await encode({ token: { id: "preview-user", name: "preview" }, secret: process.env.AUTH_SECRET!, salt: cookieName })
+  const queries: string[] = []
+  const prepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (sql: string) => {
+    queries.push(sql)
+    return prepare(sql)
+  })
+  const request = () => new Request("https://app.example.com/api/emails", { headers: { cookie: `${cookieName}=${token}` } })
+  assert.equal((await middleware(request())).headers.get("x-middleware-next"), "1")
+  assert.equal(queries.filter(sql => sql.includes('from "account"')).length, 1)
+  assert.equal(queries.filter(sql => sql.includes('from "user_role"')).length, 2)
+
+  sqlite.exec("UPDATE user_role SET role_id='civilian' WHERE user_id='preview-user'")
+  queries.length = 0
+  assert.equal((await middleware(request())).status, 403)
+  assert.equal(queries.filter(sql => sql.includes('from "account"')).length, 1)
+})
+
+test("middleware looks up an API key once and does not cache revoked permissions", async t => {
+  sqlite.exec("INSERT INTO user(id) VALUES('api-user'); INSERT INTO role(id,name) VALUES('duke','duke'),('knight','knight'); INSERT INTO user_role(user_id,role_id) VALUES('api-user','duke')")
+  sqlite.prepare("INSERT INTO api_keys(id,user_id,key,name,enabled,created_at,expires_at) VALUES('key','api-user','test-key','Test',1,?,?)").run(Date.now(), Date.now() + 60_000)
+  const queries: string[] = []
+  const prepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (sql: string) => {
+    queries.push(sql)
+    return prepare(sql)
+  })
+  const request = () => new Request("https://app.example.com/api/emails", { headers: { "X-API-Key": "test-key" } })
+  assert.equal((await middleware(request())).headers.get("x-middleware-next"), "1")
+  assert.equal(queries.filter(sql => sql.includes('from "api_keys"')).length, 1)
+  assert.equal(queries.filter(sql => sql.includes('from "user_role"')).length, 1)
+
+  sqlite.exec("UPDATE user_role SET role_id='knight' WHERE user_id='api-user'")
+  queries.length = 0
+  assert.equal((await middleware(request())).status, 401)
+  assert.equal(queries.filter(sql => sql.includes('from "api_keys"')).length, 1)
 })
 
 test("emperor browser navigation is allowed but claims still require authentication", async () => {
