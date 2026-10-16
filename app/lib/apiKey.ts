@@ -7,8 +7,10 @@ import { headers } from "next/headers"
 import { hasPermission, PERMISSIONS, type Permission, type Role } from "./permissions"
 import { safeErrorMetadata } from "./safe-error"
 
+type RequestIdentity = { userId: string; roles: Role[]; viaApiKey: boolean }
+
 // Never trust a client-supplied identity header, even behind middleware.
-export async function getUserId(permission?: Permission, requestHeaders?: Headers) {
+export async function getRequestIdentity(requestHeaders?: Headers): Promise<RequestIdentity | undefined> {
   try {
     const headerList = requestHeaders ?? await headers()
     const key = headerList.get("X-API-Key")
@@ -38,14 +40,21 @@ export async function getUserId(permission?: Permission, requestHeaders?: Header
       with: { role: true },
     })
     const roles = records.map(record => record.role.name as Role)
-    if (key !== null) {
-      if (!hasPermission(roles, PERMISSIONS.MANAGE_API_KEY)) return undefined
-      if (permission && permission !== PERMISSIONS.MANAGE_EMAIL && permission !== PERMISSIONS.MANAGE_CONFIG) return undefined
-    }
-    if (permission && !hasPermission(roles, permission)) return undefined
-    return userId
+    if (key !== null && !hasPermission(roles, PERMISSIONS.MANAGE_API_KEY)) return undefined
+    return { userId, roles, viaApiKey: key !== null }
   } catch (error) {
     console.error("Failed to resolve request identity:", safeErrorMetadata(error))
     throw new Error("Request identity lookup failed")
   }
+}
+
+export function identityHasPermission(identity: RequestIdentity, permission: Permission) {
+  if (identity.viaApiKey && permission !== PERMISSIONS.MANAGE_EMAIL && permission !== PERMISSIONS.MANAGE_CONFIG) return false
+  return hasPermission(identity.roles, permission)
+}
+
+export async function getUserId(permission?: Permission, requestHeaders?: Headers) {
+  const identity = await getRequestIdentity(requestHeaders)
+  if (!identity || (permission && !identityHasPermission(identity, permission))) return undefined
+  return identity.userId
 }
