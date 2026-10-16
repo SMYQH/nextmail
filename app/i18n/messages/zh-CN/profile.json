@@ -136,10 +136,7 @@
     "maxEmails": "每个用户最大邮箱数",
     "catchAll": {
       "title": "Catch-all 邮箱",
-      "description": "设置每个域名是否接收发往未创建邮箱地址的邮件。",
-      "enabledColumn": "启用",
-      "mailboxColumn": "邮箱名",
-      "showWhenDisabledColumn": "停用时显示",
+      "description": "Catch-all 将发往本域名下尚未创建地址的邮件，统一收进一个汇总邮箱。已创建的邮箱仍各自收信。",
       "enableDomain": "为 {domain} 启用 Catch-all",
       "mailboxName": "{domain} 的 Catch-all 邮箱名",
       "mailboxNamePlaceholder": "邮箱名",
@@ -147,7 +144,11 @@
       "invalidMailboxName": "Catch-all 邮箱名格式无效，请使用字母、数字及有效的邮箱前缀标点。",
       "addressOccupied": "该邮箱地址已被占用，请选择其他邮箱名。",
       "showWhenDisabledDomain": "停用 {domain} 的 Catch-all 时仍显示该邮箱",
-      "showWhenDisabledDescription": "关闭后，仅在 Catch-all 停用时隐藏邮箱；启用时仍会显示。"
+      "showWhenDisabledDescription": "停止收集未创建地址的邮件后，仍可在“我的邮箱”查看此汇总邮箱。隐藏邮箱不会删除历史邮件，此设置不影响收信。",
+      "enabledLabel": "接收发往未创建地址的邮件",
+      "enabledDescription": "例如，someone@{domain} 尚未创建时，发给它的邮件会进入下方汇总邮箱。",
+      "mailboxLabel": "汇总邮箱地址",
+      "showWhenDisabledLabel": "停用收集后仍显示此邮箱"
     },
     "turnstile": {
       "enable": "启用 Cloudflare Turnstile",

@@ -22,6 +22,10 @@ const cloudflareState: {
   verifiers: string[]
   resourceReads: number
   zones: Array<{ id: string; name: string }>
+  botManagement: { fight_mode?: boolean; stale_zone_configuration?: { fight_mode?: boolean } }
+  botManagementReads: number
+  wafEntryPoint?: { name?: string; description?: string; rules?: Array<Record<string, unknown>> }
+  wafUpdates: Array<{ name?: string; description?: string; rules?: Array<Record<string, unknown>> }>
   workerScripts: Array<{ id: string }>
   workerRoutes: Array<{ id: string; zone_id: string; pattern: string; script: string }>
   database?: { uuid: string; name: string }
@@ -39,6 +43,10 @@ const cloudflareState: {
   verifiers: [],
   resourceReads: 0,
   zones: [],
+  botManagement: { fight_mode: false },
+  botManagementReads: 0,
+  wafEntryPoint: undefined,
+  wafUpdates: [],
   workerScripts: [],
   workerRoutes: [],
   otherDatabases: [],
@@ -66,6 +74,27 @@ class MockCloudflare {
     list: async function* () {
       cloudflareState.resourceReads++
       yield* cloudflareState.zones
+    },
+  }
+
+  botManagement = {
+    get: async () => {
+      cloudflareState.botManagementReads++
+      return cloudflareState.botManagement
+    },
+  }
+
+  rulesets = {
+    phases: {
+      get: async () => {
+        if (!cloudflareState.wafEntryPoint) throw new MockNotFoundError()
+        return cloudflareState.wafEntryPoint
+      },
+      update: async (_phase: string, input: { name: string; description?: string; rules: Array<Record<string, unknown>> }) => {
+        cloudflareState.wafUpdates.push(input)
+        cloudflareState.wafEntryPoint = input
+        return input
+      },
     },
   }
 
@@ -167,6 +196,10 @@ function resetCloudflareState() {
   cloudflareState.verifiers = []
   cloudflareState.resourceReads = 0
   cloudflareState.zones = [{ id: "zone-project", name: "example.invalid" }]
+  cloudflareState.botManagement = { fight_mode: false }
+  cloudflareState.botManagementReads = 0
+  cloudflareState.wafEntryPoint = undefined
+  cloudflareState.wafUpdates = []
   cloudflareState.workerScripts = [
     { id: "nextmail" },
     { id: "email-receiver-worker" },
@@ -246,6 +279,22 @@ test("preflight accepts account-owned tokens after user verification rejects the
   assert.deepEqual(cloudflareState.deleted, [])
 })
 
+test("deployment WAF preflight refuses standard Bot Fight Mode before building or changing the ruleset", async () => {
+  resetCloudflareState()
+  cloudflareState.botManagement = { fight_mode: false, stale_zone_configuration: { fight_mode: true } }
+
+  await assert.rejects(
+    verifyCloudflareDeployAccess({
+      emailDomain: "example.invalid",
+      customDomain: "app.example.invalid",
+      manageOpenApiWaf: true,
+    }),
+    /Bot Fight Mode cannot be skipped/,
+  )
+  assert.equal(cloudflareState.botManagementReads, 1)
+  assert.deepEqual(cloudflareState.wafUpdates, [])
+})
+
 test("cleanup accepts an active account-owned token", async () => {
   resetCloudflareState()
   cloudflareState.userTokenError = new Error("Not a user-owned token")
@@ -309,7 +358,10 @@ test("Cloudflare preflight stops before resource checks for an expired token", a
 
 const { buildAndPreflightBeforeMigration } = await import("../scripts/deploy/worker-deployment-sequence")
 const stoppedAtBuild = new Error("Stop before building or changing remote resources")
-const buildCandidate = mock.fn(() => { throw stoppedAtBuild })
+const buildCandidate = mock.fn(() => {
+  assert.equal(process.env.OPENAPI_WAF_VERIFY_SECRET, undefined)
+  throw stoppedAtBuild
+})
 const deploymentSequenceMock = mock.module("../scripts/deploy/worker-deployment-sequence", {
   namedExports: { buildAndPreflightBeforeMigration, buildWorkerCandidate: buildCandidate },
 })
@@ -325,6 +377,7 @@ for (const { customDomain, workerExists } of deploymentTargets) {
     if (!workerExists) cloudflareState.workerScripts = []
     buildCandidate.mock.resetCalls()
     process.env.AUTH_SECRET = "synthetic-auth-secret"
+    process.env.OPENAPI_WAF_VERIFY_SECRET = "0123456789abcdef0123456789abcdef"
     if (customDomain) process.env.CUSTOM_DOMAIN = customDomain
     else delete process.env.CUSTOM_DOMAIN
     writeFileSync(join(fixtureDirectory, "wrangler.json"), JSON.stringify({

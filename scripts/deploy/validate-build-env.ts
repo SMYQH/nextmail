@@ -9,7 +9,7 @@ export function assertSafeBuildEnv(root = process.cwd()) {
     const path = resolve(root, file)
     if (!existsSync(path)) continue
     const values = parse(readFileSync(path))
-    for (const name of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CF_API_TOKEN", "CF_API_KEY"]) {
+    for (const name of ["CLOUDFLARE_API_TOKEN", "CLOUDFLARE_API_KEY", "GITHUB_TOKEN", "GH_TOKEN", "CF_API_TOKEN", "CF_API_KEY", "OPENAPI_WAF_VERIFY_SECRET"]) {
       if (values[name]) throw new Error(`${file} contains deployment credential ${name}. Move deployment settings to .env.deploy before building; OpenNext bundles application .env files.`)
     }
   }

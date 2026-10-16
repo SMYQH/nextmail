@@ -79,6 +79,8 @@ npm run preview:worker
 | `tests/catch-all-config.test.ts` | 域名配置校验、Catch-all 重命名期间收信、首次并发保存保留原邮箱及邮件、KV 保存失败后的重试及稳定邮箱关联 |
 | `tests/mailbox-controls.test.ts`、`tests/mailbox-events.test.ts` | Catch-all 置顶及删除保护、已读及删除统计、增量游标及延迟响应的统计隔离 |
 | `tests/latest-request-gate.test.ts`、`tests/message-list-refresh.test.ts` | 过期请求响应隔离及刷新后保留已加载分页游标 |
+| `tests/deploy-waf.test.ts` | 主机与 OpenAPI 路径范围、规则及 ID 保留、速率限制保留、验证密钥隔离与脱敏、API/前端探测及重试 |
+| `tests/avatar.test.ts` | 空名称、Unicode 首字符及 SVG 文本转义 |
 | `tests/shared-date.test.ts` | 分享页首屏日期一致、语言和时区格式及永久邮箱到期标记 |
 | `tests/password.test.ts`、`tests/webhook.test.ts`、`tests/deploy.test.ts`、`tests/deploy-routing.test.ts`、`tests/deploy-delete.test.ts` | 密码兼容、Webhook 主机策略及签名、部署构建/迁移顺序、Email Routing Zone 选择、Cloudflare 清理范围及 Token 保护 |
 
@@ -170,3 +172,7 @@ Catch-all 并发与发件：让两个首次保存请求使用不同前缀，并�
 延迟收件：首次快照后插入时间相同但 ID 更小、或时间更早的邮件；增量轮询必须收到它们，列表仍按邮件时间显示。超过一页时逐页排空，插入新邮件及删除全部旧邮件后继续检查，不能遗漏或重复显示。
 
 跨会话已读：从两封未读邮件开始，在另一会话读取其中一封。等待当前页面轮询显示 `1 / 2`，再打开本页仍加粗的同一行，计数必须保持 `1 / 2`；打开另一封才变为 `0 / 2`。分别检查英文、中文及桌面、移动视口。
+
+邮件正文与头像：清空缓存后，分别在“全部”和域名筛选下打开 HTML-only 邮件，并反复切换筛选、邮件及主题。正文必须显示且 iframe 不得折叠；保留 iframe 沙箱，不允许邮件脚本执行。两种语言、明暗主题、桌面与短屏移动端分别检查，包含鼠标、键盘和减少动态效果模式。阻止外部头像请求，页头与个人中心应显示本地首字母头像；恢复请求并切换用户图片后应能重新显示远程头像。
+
+Catch-all 配置说明：检查每个域名的收集开关、汇总地址和停用后的显示开关都有独立标签及说明，移动端完整显示域名后缀，键盘可以操作。保存时分别核对 `enabled` 和 `showAlways`，确认显示设置不改变收集状态，也不删除历史邮件。

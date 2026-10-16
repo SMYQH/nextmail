@@ -136,10 +136,7 @@
     "maxEmails": "Max Emails per User",
     "catchAll": {
       "title": "Catch-all Mailboxes",
-      "description": "Choose whether each domain accepts mail for addresses that do not have a mailbox.",
-      "enabledColumn": "Enabled",
-      "mailboxColumn": "Mailbox",
-      "showWhenDisabledColumn": "Show when disabled",
+      "description": "Catch-all collects mail sent to uncreated addresses in one mailbox. Existing mailboxes continue receiving their own mail.",
       "enableDomain": "Enable Catch-all for {domain}",
       "mailboxName": "Catch-all mailbox name for {domain}",
       "mailboxNamePlaceholder": "Mailbox name",
@@ -147,7 +144,11 @@
       "invalidMailboxName": "Invalid Catch-all mailbox name. Use letters, numbers, and valid email prefix punctuation.",
       "addressOccupied": "That mailbox address is already in use. Choose another name.",
       "showWhenDisabledDomain": "Show the Catch-all mailbox for {domain} when disabled",
-      "showWhenDisabledDescription": "When off, the mailbox is hidden only while Catch-all is disabled. It remains visible while enabled."
+      "showWhenDisabledDescription": "Show this mailbox in “My Emails” even after collection is disabled. Hiding it does not delete its messages. This setting does not affect mail delivery.",
+      "enabledLabel": "Collect mail for uncreated addresses",
+      "enabledDescription": "For example, mail to an uncreated someone@{domain} goes to the collection mailbox below.",
+      "mailboxLabel": "Collection mailbox",
+      "showWhenDisabledLabel": "Keep mailbox visible after disabling collection"
     },
     "turnstile": {
       "enable": "Enable Cloudflare Turnstile",

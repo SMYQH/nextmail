@@ -64,7 +64,7 @@ test("Worker builds reject deployment credentials in every compiled env mode wit
   writeFileSync(join(directory, ".env.deploy"), "CLOUDFLARE_API_TOKEN=synthetic-deploy-token\nGITHUB_TOKEN=synthetic-github-token")
   assert.doesNotThrow(() => assertSafeBuildEnv(directory))
   for (const file of [".env", ".env.local", ".env.production", ".env.production.local", ".env.development", ".env.development.local", ".env.test", ".env.test.local"]) {
-    for (const name of ["CLOUDFLARE_API_TOKEN", "GITHUB_TOKEN"]) {
+    for (const name of ["CLOUDFLARE_API_TOKEN", "GITHUB_TOKEN", "OPENAPI_WAF_VERIFY_SECRET"]) {
       writeFileSync(join(directory, file), `${name}=synthetic-private-value`)
       assert.throws(() => assertSafeBuildEnv(directory), error => {
         assert.ok(error instanceof Error)

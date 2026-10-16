@@ -11,6 +11,7 @@ import {
   getKVNamespaceList,
   getEnabledWebhookUrls,
   configureEmailCatchAll,
+  configureOpenApiWaf,
   verifyCloudflareDeployAccess,
   WORKER_NAME,
   type WorkerRoute,
@@ -19,6 +20,8 @@ import { assertWebhookDeployment } from "./webhook-config";
 import { syncLocalGitHubSecrets } from "./github-secrets";
 import { assertSafeBuildEnv } from "./validate-build-env";
 import { buildAndPreflightBeforeMigration, buildWorkerCandidate } from "./worker-deployment-sequence";
+import { assertOpenApiWafVerifySecret } from "./waf-config";
+import { verifyOpenApiHttpBehavior } from "./waf-runtime-verification";
 
 const DATABASE_NAME = "nextmail-d1";
 const KV_NAMESPACE_NAME = "nextmail-kv";
@@ -36,6 +39,10 @@ const validateEnvironment = () => {
     throw new Error(
       `Missing required environment variables: ${missing.join(", ")}`
     );
+  }
+
+  if (process.env.CUSTOM_DOMAIN?.trim()) {
+    assertOpenApiWafVerifySecret(process.env.OPENAPI_WAF_VERIFY_SECRET, process.env.AUTH_SECRET);
   }
 };
 
@@ -261,14 +268,26 @@ export const main = async () => {
     console.log("🚀 Starting deployment process...");
 
     validateEnvironment();
+    const openApiWafVerifySecret = process.env.CUSTOM_DOMAIN?.trim()
+      ? assertOpenApiWafVerifySecret(process.env.OPENAPI_WAF_VERIFY_SECRET, process.env.AUTH_SECRET)
+      : undefined;
+    // This secret is used only by this process for the ruleset expression and HTTP probes.
+    // Removing it before any child command keeps build output and Worker deployment env clean.
+    delete process.env.OPENAPI_WAF_VERIFY_SECRET;
     console.log("🔐 Checking Cloudflare API token and deployment access...");
     const cloudflareAccess = await verifyCloudflareDeployAccess({
       emailDomain: process.env.EMAIL_DOMAIN!,
       customDomain: process.env.CUSTOM_DOMAIN,
+      manageOpenApiWaf: Boolean(process.env.CUSTOM_DOMAIN?.trim()),
     });
-    const { emailCatchAllTarget, workerRoute } = cloudflareAccess;
+    const { emailCatchAllTarget, workerRoute, openApiWafTarget } = cloudflareAccess;
     const workerExists = cloudflareAccess.existingWorkerNames.has(WORKER_NAME);
     console.log("✅ Cloudflare token is active and required account/Zone API access is available");
+    if (openApiWafTarget) {
+      console.log("ℹ️ OpenAPI WAF rules will be scoped to the configured hostname. Bot Fight Mode is disabled for this Zone.");
+    } else {
+      console.log("ℹ️ OpenAPI WAF rules require CUSTOM_DOMAIN; workers.dev does not provide a customer-managed Zone.");
+    }
     await buildAndPreflightBeforeMigration(
       () => {
         updateWorkerExposure(workerRoute, !workerExists);
@@ -278,6 +297,9 @@ export const main = async () => {
         const id = await checkAndCreateDatabase();
         assertWebhookDeployment(await getEnabledWebhookUrls(id), process.env.WEBHOOK_ALLOWED_HOSTS || '');
         if (!process.env.WEBHOOK_ALLOWED_HOSTS?.trim()) console.log("ℹ️ Webhooks require WEBHOOK_ALLOWED_HOSTS; see docs/deploy.md#webhook-setup. No enabled webhooks are affected.");
+        if (openApiWafTarget && openApiWafVerifySecret) {
+          await configureOpenApiWaf(openApiWafTarget, openApiWafVerifySecret);
+        }
         return id;
       },
       migrateDatabase,
@@ -288,6 +310,11 @@ export const main = async () => {
     deployEmailWorker();
     deployCleanupWorker();
     await configureEmailCatchAll(emailCatchAllTarget);
+
+    if (openApiWafTarget && openApiWafVerifySecret) {
+      await verifyOpenApiHttpBehavior(openApiWafTarget, openApiWafVerifySecret);
+      console.log("✅ OpenAPI WAF rules and post-deployment HTTP behavior verified");
+    }
 
     console.log("🎉 Deployment completed successfully");
   } catch (error) {
