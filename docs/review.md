@@ -4,10 +4,15 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
-| 107 | Redeployed custom hostname has no DNS records and cannot reach the Worker. | Resolved: managed domain and DNS verified; both locales render in remote preview; public access is challenged. |
+| 112 | Deployment does not configure project-scoped WAF exceptions for OpenAPI and browser verification. | Resolved locally: scoped rules and deployment probes pass regression checks; remote behavior unverified. |
+| 111 | Catch-all configuration conflates collection and visibility after disabling it. | Resolved locally: separate labels and explanations in both languages; browser checks preserve saved flags. |
+| 110 | External profile avatars fail without a usable fallback. | Resolved locally: direct loading and generated fallback pass browser checks; production behavior unverified. |
+| 109 | HTML message body sometimes appears blank under the All mailbox filter. | Open: not reproduced locally; production verification pending. |
+| 108 | Authenticated production requests intermittently fail with Worker resource-limit errors. | Open: live verification confirms CPU-limit failures. |
+| 107 | Redeployed custom hostname has no DNS records and cannot reach the Worker. | Resolved: domain and DNS verified; production UI reached through a temporary WAF exception; normal access remains challenged. |
 | 106 | Configured GitHub token cannot synchronize Actions repository secrets. | Resolved: replacement token synchronized all configured Actions secrets. |
 | 105 | Redeployment fails when generated Next.js route types are missing. | Resolved: production and Worker builds pass; Cloudflare redeployment completed. |
-| 104 | Session revalidation discards loaded mailbox pages and scroll position. | Resolved locally: browser component checks retain pages and viewport; full-page authentication unverified. |
+| 104 | Session revalidation discards loaded mailbox pages and scroll position. | Resolved: authenticated production browser checks retain loaded mailbox pages and scroll after session revalidation. |
 | 103 | Catch-all sender checks reject renamed mailboxes and can authorize reused stale addresses. | Resolved locally: registered identities pass session and API-key regressions; live delivery unverified. |
 | 102 | Concurrent first Catch-all saves replace the winning mailbox identity. | Resolved locally: overlapping saves retain one mailbox and its deliveries; remote concurrency unverified. |
 | 101 | Sending setup still describes one global service switch and key. | Resolved locally: instructions match per-domain configuration. |

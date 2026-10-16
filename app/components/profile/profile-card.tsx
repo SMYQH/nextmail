@@ -2,7 +2,7 @@
 
 import { User } from "next-auth"
 import { useTranslations, useLocale } from "next-intl"
-import Image from "next/image"
+import { UserAvatar } from "@/components/ui/user-avatar"
 import { Button } from "@/components/ui/button"
 import { signOutAfterClearingCaches } from "@/lib/private-cache"
 import { signOut } from "next-auth/react"
@@ -77,16 +77,13 @@ export function ProfileCard({ user, canInitializeEmperor }: ProfileCardProps) {
     <div className="max-w-2xl mx-auto space-y-6">
       <div className="fluent-panel p-6">
         <div className="flex items-center gap-6">
-          <div className="relative">
-            {user.image && (
-              <Image
-                src={user.image}
-                alt={user.name || tAuth("userAvatar")}
-                width={80}
-                height={80}
-                className="rounded-full ring-2 ring-primary/20"
-              />
-            )}
+          <div className="relative shrink-0">
+            <UserAvatar
+              src={user.image}
+              name={user.name || tAuth("userAvatar")}
+              size={80}
+              className="rounded-full ring-2 ring-primary/20"
+            />
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">

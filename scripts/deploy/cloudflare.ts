@@ -1,5 +1,12 @@
 import Cloudflare, { NotFoundError } from "cloudflare";
 import "./load-env";
+import {
+  configureOpenApiWaf as configureOpenApiWafRules,
+  OPENAPI_WAF_PHASE,
+  type OpenApiWafTarget,
+  type WafEntryPointApi,
+  verifyOpenApiWaf as verifyOpenApiWafRules,
+} from "./waf-config";
 
 const CF_ACCOUNT_ID = process.env.CLOUDFLARE_ACCOUNT_ID!;
 const CF_API_TOKEN = process.env.CLOUDFLARE_API_TOKEN;
@@ -20,6 +27,7 @@ type CloudflarePreflightOptions = {
   emailDomain: string;
   customDomain?: string;
   workerRouteZoneNames?: string[];
+  manageOpenApiWaf?: boolean;
 };
 
 const apiErrorStatus = (error: unknown) => {
@@ -34,6 +42,17 @@ const checkCloudflareAccess = async <T>(permission: string, action: () => Promis
   } catch (error) {
     throw new Error(
       `Cloudflare API token preflight failed for ${permission}${apiErrorStatus(error)}. Check the token's account and Zone scope and required permission.`,
+    );
+  }
+};
+
+export const assertOpenApiWafCompatible = async (zoneId: string, hostname: string) => {
+  const botConfig = await checkCloudflareAccess("Bot Management: Read", async () =>
+    client.botManagement.get({ zone_id: zoneId }),
+  ) as { fight_mode?: boolean; stale_zone_configuration?: { fight_mode?: boolean } };
+  if (botConfig.fight_mode === true || botConfig.stale_zone_configuration?.fight_mode === true) {
+    throw new Error(
+      `Cloudflare Bot Fight Mode is enabled for ${hostname}'s Zone. Bot Fight Mode cannot be skipped for OpenAPI requests; disable it or configure Super Bot Fight Mode before deploying NextMail's WAF bypass.`,
     );
   }
 };
@@ -54,6 +73,7 @@ export const verifyCloudflareDeployAccess = async ({
   emailDomain,
   customDomain,
   workerRouteZoneNames = [],
+  manageOpenApiWaf = false,
 }: CloudflarePreflightOptions) => {
   let tokenStatus;
   try {
@@ -107,6 +127,7 @@ export const verifyCloudflareDeployAccess = async ({
   });
 
   let workerRoute: WorkerRoute | undefined;
+  let openApiWafTarget: OpenApiWafTarget | undefined;
   const routeZones = new Map<string, (typeof zones)[number]>();
   if (customDomain?.trim()) {
     const hostname = normalizeHostname(customDomain);
@@ -114,6 +135,19 @@ export const verifyCloudflareDeployAccess = async ({
     if (!zone?.id || !zone.name) throw new Error(`No Cloudflare Zone found for ${hostname}`);
     workerRoute = { pattern: hostname, zone_name: zone.name, custom_domain: true };
     routeZones.set(zone.name, zone);
+
+    if (manageOpenApiWaf) {
+      openApiWafTarget = { hostname, zoneId: zone.id };
+      await assertOpenApiWafCompatible(zone.id, hostname);
+
+      await checkCloudflareAccess("WAF: Read", async () => {
+        try {
+          await client.rulesets.phases.get(OPENAPI_WAF_PHASE, { zone_id: zone.id! });
+        } catch (error) {
+          if (!(error instanceof NotFoundError)) throw error;
+        }
+      });
+    }
   }
 
   for (const zoneName of workerRouteZoneNames) {
@@ -135,6 +169,7 @@ export const verifyCloudflareDeployAccess = async ({
     emailCatchAllTarget: { domain: normalizedEmailDomain, zone: emailZone },
     emailCatchAllRule,
     workerRoute,
+    openApiWafTarget,
     existingWorkerNames: new Set(workerScripts.map(script => script.id)),
     routeZones: [...routeZones.values()],
   };
@@ -251,6 +286,31 @@ export const configureEmailCatchAll = async (target?: Awaited<ReturnType<typeof 
   console.log(`✅ Catch All for ${domain} now targets ${EMAIL_WORKER_NAME}`);
   return updated;
 };
+
+const openApiWafApi: WafEntryPointApi = {
+  async getEntryPoint(zoneId) {
+    try {
+      return await client.rulesets.phases.get(OPENAPI_WAF_PHASE, { zone_id: zoneId });
+    } catch (error) {
+      if (error instanceof NotFoundError) return null;
+      throw error;
+    }
+  },
+  async updateEntryPoint(zoneId, input) {
+    await client.rulesets.phases.update(OPENAPI_WAF_PHASE, {
+      zone_id: zoneId,
+      name: input.name,
+      ...(input.description ? { description: input.description } : {}),
+      rules: input.rules,
+    });
+  },
+};
+
+export const configureOpenApiWaf = (target: OpenApiWafTarget, verificationSecret: string) =>
+  configureOpenApiWafRules(openApiWafApi, target, verificationSecret);
+
+export const verifyOpenApiWaf = (target: OpenApiWafTarget, verificationSecret: string) =>
+  verifyOpenApiWafRules(openApiWafApi, target, verificationSecret);
 
 export const getDatabase = async () => {
   if (DATABASE_ID) {

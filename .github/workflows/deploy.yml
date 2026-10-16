@@ -59,5 +59,6 @@ jobs:
           DATABASE_ID: ${{ secrets.DATABASE_ID }}
           KV_NAMESPACE_ID: ${{ secrets.KV_NAMESPACE_ID }}
           CUSTOM_DOMAIN: ${{ secrets.CUSTOM_DOMAIN }}
+          OPENAPI_WAF_VERIFY_SECRET: ${{ secrets.OPENAPI_WAF_VERIFY_SECRET }}
           EMAIL_DOMAIN: ${{ secrets.EMAIL_DOMAIN }}
           WEBHOOK_ALLOWED_HOSTS: ${{ secrets.WEBHOOK_ALLOWED_HOSTS }}

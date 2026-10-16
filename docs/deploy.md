@@ -21,14 +21,24 @@ OpenNext 应用运行在 Cloudflare Workers。主 Worker 使用 `nodejs_compat`�
 ### 本地部署脚本
 
 1. 复制 `.env.deploy.example` 为 `.env.deploy` 并填写[环境变量](#环境变量)。`.env.deploy` 已被 Git 忽略，本地部署从此文件读取部署配置，也兼容读取 `.env` 中的应用配置。OpenNext 会把应用 `.env*` 编译进 Worker，因此部署令牌只能放在 `.env.deploy` 或进程环境中；构建会拒绝应用环境文件中的部署令牌。旧配置请将部署参数移入 `.env.deploy`。
-2. `.env.deploy` 中的 Cloudflare API Token 需要具备下文列出的[最小部署权限](#cloudflare-api-token-权限)。`npm run deploy` 会在构建前验证 Token 状态，并对所需账户和 Zone API 执行只读访问检查；检查失败时不会开始构建或更改远程资源。
+2. `.env.deploy` 中的 Cloudflare API Token 需要具备下文列出的[最小部署权限](#cloudflare-api-token-权限)。设置 `CUSTOM_DOMAIN` 时，还必须设置独立的 `OPENAPI_WAF_VERIFY_SECRET`。`npm run deploy` 会在构建前验证 Token 状态、WAF 和 Bot Management 读取权限，并检查标准 Bot Fight Mode；检查失败时不会开始构建或更改远程资源。
 3. 如需同时配置 GitHub Actions，在 `.env.deploy` 中填写 `REPOSITORY_URL` 和 `GITHUB_TOKEN`；留空任意一项则跳过同步。
 4. 运行部署脚本：
 ```bash
 npm run deploy
 ```
 
-脚本首先调用 Cloudflare Token 验证接口，并只读检查 D1、KV、Workers Scripts、Zone、Email Routing Rules；设置 `CUSTOM_DOMAIN` 时，也会检查该域名对应 Zone 的 Worker Routes。部署预检仅按本次环境配置确定目标 Zone，不要求访问 `wrangler.json` 中将被替换或移除的旧路由所属 Zone；留空 `CUSTOM_DOMAIN` 时使用 `workers.dev`。若 Token 无效或资源访问检查失败，流程会在构建、迁移及任何 Cloudflare 写操作之前停止。随后脚本验证 `EMAIL_DOMAIN` 是同名 Zone 的顶级域，读取主 Worker 是否已存在，更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Worker 打包，而不发布到 Cloudflare。构建、产物检查和 Wrangler 打包成功后，脚本才会解析 `DATABASE_ID` 指定的数据库（未指定时检查或创建 `nextmail-d1`）、检查已启用的 Webhook，并执行远程数据库迁移。迁移后，脚本会解析 KV、同步可选的 GitHub Secrets，并部署主 Worker；远程迁移与后续 KV、Secrets、Worker 发布并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。脚本会修改三个 Wrangler 配置中的 `database_id`，以及主应用与邮件接收 Worker 的 `SITE_CONFIG` KV ID 和主应用路由；请在执行前确认这些文件可以被写入。
+脚本首先调用 Cloudflare Token 验证接口，并只读检查 D1、KV、Workers Scripts、Zone、Email Routing Rules；设置 `CUSTOM_DOMAIN` 时，也会检查该域名对应 Zone 的 Worker Routes、WAF Rulesets 和 Bot Management。若 Bot Management API 显示标准 Bot Fight Mode 已启用（包括升级或降级后保留的旧设置），部署会在构建前停止，因为 Cloudflare 不允许自定义规则绕过标准 Bot Fight Mode。部署预检仅按本次环境配置确定目标 Zone，不要求访问 `wrangler.json` 中将被替换或移除的旧路由所属 Zone；留空 `CUSTOM_DOMAIN` 时使用 `workers.dev`，不会配置 Zone WAF。若 Token 无效或只读访问检查失败，流程会在构建、迁移及任何 Cloudflare 写操作之前停止。随后脚本验证 `EMAIL_DOMAIN` 是同名 Zone 的顶级域，读取主 Worker 是否已存在，更新本地 Worker 暴露配置，运行 `npm run build:worker`，再运行 `npx wrangler deploy --dry-run --config wrangler.json` 检查 Worker 打包，而不发布到 Cloudflare。构建、产物检查和 Wrangler 打包成功后，脚本会解析 `DATABASE_ID` 指定的数据库（未指定时检查或创建 `nextmail-d1`）、检查已启用的 Webhook，然后安装或更新项目专属的 WAF 规则，并在数据库迁移前确认 WAF 写权限。若随后迁移、KV 或 Worker 发布失败，WAF 规则可能已更新而其他部署步骤尚未完成；远程迁移与后续 KV、Secrets、Worker 发布也并非原子操作，Cloudflare API 或发布失败仍可能需要运维恢复。之后脚本会执行远程迁移，解析 KV、同步可选的 GitHub Secrets，并部署主 Worker；首次部署会先创建没有公开路由的 Worker，再安装认证密钥和 Webhook 白名单，然后设置 `workers.dev` 或 `CUSTOM_DOMAIN` 路由并发布同一份构建产物。之后部署 Email Worker 和 Cleanup Worker；全部成功后，脚本会使用已验证的 `EMAIL_DOMAIN` Zone 配置 Catch All，将邮件转发到 `email-receiver-worker`。自定义域名部署最后会请求 `/api/config`、`/api/emails` 和 `/en`，确认 Cloudflare 未挑战请求、应用 API 仍返回预期的未授权响应，且前端返回 HTML。若需要在部署后重新检查，可运行 `npm run verify:waf`；该命令仅读取规则配置并发送相同的三个 HTTP 请求，不修改 Cloudflare 配置。
+
+常规 OpenAPI Skip 规则只匹配 `CUSTOM_DOMAIN` 主机，以及 `/api/config` 和 `/api/emails` 路径。单独的部署验证规则匹配该主机上带有验证请求头的所有路径，以便自动化前端检查加载页面及其资源。部署会把两条自有规则放到 Zone 自定义规则入口最前方，并保留其他规则的 ID 和相对顺序；命中 Skip 规则的请求会停止执行后续 Zone 自定义规则，并跳过 Cloudflare 托管 WAF、Super Bot Fight Mode，以及 Browser Integrity Check、Security Level、User Agent Blocking、Zone Lockdown、Hotlink Protection 和旧版 Managed Rules。规则不会跳过 Cloudflare Rate Limiting 阶段或旧版 Rate Limiting；因此已有速率限制仍会执行，超过限制时其配置的 block 或 challenge 动作仍可能生效。应用 API Key、会话和权限检查也继续执行，部署验证会确认无凭据请求得到 NextMail 的 JSON `401`。
+
+标准 Bot Fight Mode 无法通过自定义规则绕过，检测到启用时部署会失败。Zone IP Access Rules 中的 Block、Cloudflare Access、先于 Zone 规则执行的账户级动作等其他策略也不由此配置修改或绕过。真实 HTTP 验证覆盖当前部署执行者到 `/api/config`、`/api/emails` 和 `/en` 的请求路径，不保证其他来源或策略下的所有请求都可访问；若检查遇到挑战、重定向或非预期响应会失败。若只使用 `workers.dev`，该主机不属于用户管理的 Zone，项目无法自动安装 Zone WAF 规则，也无法执行此 HTTP 验证。
+
+为自定义域名部署生成一个仅用于部署和自动化前端验证的随机值，例如 `openssl rand -hex 32`，并保存到 `.env.deploy` 的 `OPENAPI_WAF_VERIFY_SECRET` 或 GitHub Actions Secret。同名 Cloudflare Skip 规则会在该项目主机上匹配验证请求头；自动化浏览器测试可为页面及资源请求设置 `x-nextmail-waf-verify` 请求头。该变量不会传给 Worker，也不会进入 OpenNext 应用环境文件、构建产物或子进程环境。拥有目标 Zone WAF 读取权限的人员可查看规则表达式并取得此值，因此它不能代替应用身份验证。请使用与 `AUTH_SECRET` 不同的值。部署结束后可运行：
+
+```bash
+npm run verify:waf
+```
 
 预检同时支持用户令牌和账户令牌：先调用用户验证接口；若该接口拒绝令牌，再调用目标账户的 [Token 验证接口](https://developers.cloudflare.com/api/resources/accounts/subresources/tokens/methods/verify/)。两种令牌都必须处于有效期内且状态为 `active`。
 
@@ -48,9 +58,9 @@ Cloudflare 的 Token 验证接口只返回 Token 状态，不会返回已分配�
 | --- | --- |
 | 账户 | `D1: Edit`、`Workers KV Storage: Edit`、`Workers Scripts: Edit` |
 | `EMAIL_DOMAIN` 所属区域 | `Zone: Read`、`Email Routing Rules: Edit` |
-| `CUSTOM_DOMAIN` 所属区域（设置时） | `Zone: Read`、`Workers Routes: Edit` |
+| `CUSTOM_DOMAIN` 所属区域（设置时） | `Zone: Read`、`Workers Routes: Edit`、`WAF: Edit`、`Bot Management: Read` |
 
-当前项目不需要 `Cloudflare Pages: Edit`、`Zone Settings: Read/Edit`、`DNS: Edit`、`API Tokens: Edit` 或 `Email Routing Addresses: Edit`。
+当前项目不需要 `Cloudflare Pages: Edit`、`Zone Settings: Read/Edit`、`DNS: Edit`、`API Tokens: Edit` 或 `Email Routing Addresses: Edit`。WAF 和 Bot Management API 的只读预检会在构建前检查对应 Zone 的可访问性；Cloudflare Token 验证接口不会返回权限策略，因此无法单独证明 `WAF: Edit`。部署会在构建完成并检查数据库与 Webhook 后、数据库迁移前，通过实际更新项目规则确认该写权限。
 
 若通过 API 创建账户部署令牌，使用单独具备 `Account API Tokens: Edit` 权限的引导令牌，按上述权限创建部署令牌后，将新令牌保存到被忽略的 `.env.deploy`。部署令牌本身不需要令牌管理权限。API 权限组名称中的 `Write` 对应控制台的 `Edit`；请从目标账户的权限组接口获取 ID，不要根据名称猜测或复用其他权限组 ID。
 
@@ -99,7 +109,7 @@ npm run delete
 
 #### 注意事项
 - CI 不需要 `.env.deploy`。在首次触发 Actions 前，请确认仓库 Secrets 已配置，至少包括 `CLOUDFLARE_ACCOUNT_ID`、`CLOUDFLARE_API_TOKEN`、`AUTH_SECRET` 和 `EMAIL_DOMAIN`。
-- `DATABASE_ID`、`KV_NAMESPACE_ID`、`CUSTOM_DOMAIN`、`EMAIL_DOMAIN`、`WEBHOOK_ALLOWED_HOSTS` 和 `NEXT_PUBLIC_BASE_URL` 也从 Actions Secrets 读取；此前只配置在 Actions Variables 中的值需要迁移。
+- `DATABASE_ID`、`KV_NAMESPACE_ID`、`CUSTOM_DOMAIN`、`OPENAPI_WAF_VERIFY_SECRET`、`EMAIL_DOMAIN`、`WEBHOOK_ALLOWED_HOSTS` 和 `NEXT_PUBLIC_BASE_URL` 也从 Actions Secrets 读取；此前只配置在 Actions Variables 中的值需要迁移。
 - 使用 tag 触发时，tag 必须以 `v` 开头（例如：v1.0.0）。
 
 
@@ -125,6 +135,7 @@ GitHub 和 Google 登录均为可选项。每个登录方式只有在其 ID 和 
 - Cloudflare KV namespace 名称固定为 `nextmail-kv`，用于存储网站配置。
 - `KV_NAMESPACE_ID`: Cloudflare KV namespace ID，用于存储网站配置 （可选， 如果不填, 则会自动通过 Cloudflare API 获取）
 - `CUSTOM_DOMAIN`: 网站自定义主机名，例如 `app.example.com`（可选）；必须属于此 Cloudflare 账号管理的 Zone。部署脚本使用 Worker Custom Domain，由 Cloudflare 自动配置 DNS 和证书，无需预先创建代理 DNS 记录；留空时启用 `workers.dev` 地址。此主机名应专供当前应用使用，部署会将它绑定到 NextMail；`pages.dev` 不属于你的 Zone，不能作为此项。
+- `OPENAPI_WAF_VERIFY_SECRET`: 设置 `CUSTOM_DOMAIN` 时必填，32–128 位 URL-safe 随机值，仅供部署脚本向 `/api/emails` 发送 WAF 验证请求；存放在 `.env.deploy` 或 GitHub Actions Secret 中。它不会进入 Worker 环境或应用构建文件，但会出现在 Cloudflare WAF 规则表达式中。
 - `EMAIL_DOMAIN`: 收件邮箱域名，例如 `example.com`；必须与此 Cloudflare 账号中匹配到的 Zone 名称完全一致。部署脚本会配置该 Zone 的 Catch All；若填写的子域名只匹配到父 Zone，脚本会在数据库修改和发布前停止，避免更改父域的 Catch All。使用子域名收信时，先完成 [Email Routing 子域名配置](https://developers.cloudflare.com/email-service/configuration/subdomains/)，并确认该子域名能匹配到独立的同名 Zone。
 
 从旧版普通 Worker Route 升级时，确认 Custom Domain 绑定成功后，在 Cloudflare 中移除同一主机名、指向 `nextmail` 的旧 `HOST/*` Route。Wrangler 发布 Custom Domain 后可能仍保留旧 Route；其他主机或其他 Worker 的路由应保留。

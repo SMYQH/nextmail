@@ -1,7 +1,7 @@
 "use client"
 
 import { Button } from "@/components/ui/button"
-import Image from "next/image"
+import { UserAvatar } from "@/components/ui/user-avatar"
 import { signOutAfterClearingCaches } from "@/lib/private-cache"
 import { signOut, useSession } from "next-auth/react"
 import { LogIn } from "lucide-react"
@@ -40,15 +40,12 @@ export function SignButton({ size = "default" }: SignButtonProps) {
         href={`/${locale}/profile`}
         className="flex items-center gap-2 hover:opacity-80 transition-opacity"
       >
-        {session.user.image && (
-          <Image
-            src={session.user.image}
-            alt={session.user.name || t("userAvatar")}
-            width={24}
-            height={24}
-            className="rounded-full"
-          />
-        )}
+        <UserAvatar
+          src={session.user.image}
+          name={session.user.name || t("userAvatar")}
+          size={24}
+          className="shrink-0 rounded-full"
+        />
         <span className="hidden sm:inline-block text-sm">{session.user.name}</span>
       </Link>
       <Button onClick={() => signOutAfterClearingCaches(() => signOut({ callbackUrl: `/${locale}` }))} variant="outline" className={cn("shrink-0", size === "lg" ? "px-8" : "")} size={size}>

@@ -215,66 +215,74 @@ export function WebsiteConfigPanel() {
             <p className="text-xs text-muted-foreground">{t("catchAll.description")}</p>
           </div>
 
-          <div>
-            <div className="space-y-2">
-              <div className="hidden sm:grid grid-cols-[4rem_minmax(0,1fr)_6rem] items-center gap-3 px-2 text-xs font-medium text-muted-foreground">
-                <span>{t("catchAll.enabledColumn")}</span>
-                <span>{t("catchAll.mailboxColumn")}</span>
-                <span className="text-right">{t("catchAll.showWhenDisabledColumn")}</span>
-              </div>
+          <div className="space-y-4">
+            {normalizeEmailDomains(emailDomains).map((domain, index) => {
+              const domainSettings = catchAllDomains[domain] ?? DEFAULT_CATCH_ALL_DOMAIN_SETTINGS
+              const controlId = `catch-all-${index}`
+              const updateDomainSettings = (updates: Partial<CatchAllDomainSettings>) => {
+                setCatchAllDomains((current) => ({
+                  ...current,
+                  [domain]: {
+                    ...DEFAULT_CATCH_ALL_DOMAIN_SETTINGS,
+                    ...current[domain],
+                    ...updates,
+                  },
+                }))
+              }
 
-              {normalizeEmailDomains(emailDomains).map((domain) => {
-                const domainSettings = catchAllDomains[domain] ?? DEFAULT_CATCH_ALL_DOMAIN_SETTINGS
-                const updateDomainSettings = (updates: Partial<CatchAllDomainSettings>) => {
-                  setCatchAllDomains((current) => ({
-                    ...current,
-                    [domain]: {
-                      ...DEFAULT_CATCH_ALL_DOMAIN_SETTINGS,
-                      ...current[domain],
-                      ...updates,
-                    },
-                  }))
-                }
-
-                return (
-                  <div
-                    key={domain}
-                    className="grid grid-cols-1 sm:grid-cols-[4rem_minmax(0,1fr)_6rem] items-center gap-3 rounded-md border border-primary/20 p-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="min-w-0 break-all text-sm sm:hidden">@{domain}</span>
-                      <Switch
-                        checked={domainSettings.enabled}
-                        onCheckedChange={(enabled) => updateDomainSettings({ enabled })}
-                        aria-label={t("catchAll.enableDomain", { domain })}
-                      />
+              return (
+                <fieldset key={domain} className="min-w-0 space-y-4 rounded-md border border-primary/20 p-3">
+                  <legend className="break-all px-1 text-sm font-medium">{domain}</legend>
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="space-y-1">
+                      <Label htmlFor={`${controlId}-enabled`}>{t("catchAll.enabledLabel")}</Label>
+                      <p id={`${controlId}-enabled-description`} className="text-xs text-muted-foreground">
+                        {t("catchAll.enabledDescription", { domain })}
+                      </p>
                     </div>
+                    <Switch
+                      id={`${controlId}-enabled`}
+                      checked={domainSettings.enabled}
+                      onCheckedChange={(enabled) => updateDomainSettings({ enabled })}
+                      aria-label={t("catchAll.enableDomain", { domain })}
+                      aria-describedby={`${controlId}-enabled-description`}
+                      className="shrink-0"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor={`${controlId}-mailbox`}>{t("catchAll.mailboxLabel")}</Label>
                     <div className="flex min-w-0 items-center rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2">
                       <Input
+                        id={`${controlId}-mailbox`}
                         value={domainSettings.mailboxName}
                         onChange={(event) => updateDomainSettings({ mailboxName: event.target.value })}
                         placeholder={t("catchAll.mailboxNamePlaceholder")}
                         aria-label={t("catchAll.mailboxName", { domain })}
-                        className="min-w-0 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                        className="min-w-0 w-0 flex-1 border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
                       />
-                      <span className="hidden min-w-0 truncate pr-3 text-sm text-muted-foreground sm:inline">@{domain}</span>
-                    </div>
-                    <div className="flex items-center justify-between gap-2 sm:justify-end">
-                      <span className="text-xs text-muted-foreground sm:hidden">{t("catchAll.showWhenDisabledColumn")}</span>
-                      <Switch
-                        checked={domainSettings.showAlways}
-                        onCheckedChange={(showAlways) => updateDomainSettings({ showAlways })}
-                        aria-label={t("catchAll.showWhenDisabledDomain", { domain })}
-                        className="justify-self-end"
-                      />
+                      <span className="max-w-[60%] shrink-0 break-all pr-3 text-sm text-muted-foreground">@{domain}</span>
                     </div>
                   </div>
-                )
-              })}
-            </div>
+                  <div className="flex items-start justify-between gap-4 border-t pt-3">
+                    <div className="space-y-1">
+                      <Label htmlFor={`${controlId}-visible`}>{t("catchAll.showWhenDisabledLabel")}</Label>
+                      <p id={`${controlId}-visible-description`} className="text-xs text-muted-foreground">
+                        {t("catchAll.showWhenDisabledDescription")}
+                      </p>
+                    </div>
+                    <Switch
+                      id={`${controlId}-visible`}
+                      checked={domainSettings.showAlways}
+                      onCheckedChange={(showAlways) => updateDomainSettings({ showAlways })}
+                      aria-label={t("catchAll.showWhenDisabledDomain", { domain })}
+                      aria-describedby={`${controlId}-visible-description`}
+                      className="shrink-0"
+                    />
+                  </div>
+                </fieldset>
+              )
+            })}
           </div>
-
-          <p className="text-xs text-muted-foreground">{t("catchAll.showWhenDisabledDescription")}</p>
         </div>
 
         <div className="space-y-4 rounded-lg border border-dashed border-primary/40 p-4">

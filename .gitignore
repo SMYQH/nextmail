@@ -54,3 +54,4 @@ public/workbox-*.js
 /playwright-report/
 /test-results/
 /.shannon/
+/tmp/
