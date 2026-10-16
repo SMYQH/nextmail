@@ -16,7 +16,7 @@
       "binding": "DB",
       "migrations_dir": "drizzle",
       "database_name": "nextmail-d1",
-      "database_id": "64e9d380-7b1e-40ee-ba4f-c1a526785295"
+      "database_id": "af7290e2-ce7d-45f9-91e9-8f7b272cc087"
     }
   ]
 }

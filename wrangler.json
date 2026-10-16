@@ -23,20 +23,21 @@
     {
       "binding": "DB",
       "database_name": "nextmail-d1",
-      "database_id": "64e9d380-7b1e-40ee-ba4f-c1a526785295",
+      "database_id": "af7290e2-ce7d-45f9-91e9-8f7b272cc087",
       "migrations_dir": "drizzle"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "SITE_CONFIG",
-      "id": "0492b710f53b49b08c20ab984372df45"
+      "id": "df23f82ca5684484a74e2a343b3e0dca"
     }
   ],
   "routes": [
     {
-      "pattern": "mail.smyqh.com/*",
-      "zone_name": "smyqh.com"
+      "pattern": "mail.smyqh.com",
+      "zone_name": "smyqh.com",
+      "custom_domain": true
     }
   ]
 }

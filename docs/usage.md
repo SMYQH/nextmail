@@ -346,6 +346,25 @@ GET /api/emails/{emailId}?cursor=xxx
 
 列表仅返回元数据及 `is_read`，正文请通过邮件详情接口获取。增量查询按数据库写入序号升序返回，即使邮件时间更早或随机 ID 更小，后提交的邮件也能被获取；普通分页仍按邮件时间及 ID 降序返回。游标是不透明值，客户端不应自行构造或解析。本人读取邮件详情会将收到的邮件标为已读，并返回操作后的 `total`、`unread` 统计；重复或跨会话读取按服务端统计更新，不会重复减少未读数。
 
+#### 发送邮件
+
+```http
+POST /api/emails/{emailId}/send
+Content-Type: application/json
+
+{
+  "to": "recipient@example.org",
+  "subject": "邮件主题",
+  "content": "<p>邮件正文</p>"
+}
+```
+
+`to`、`subject` 和 `content` 均为必填字符串，`content` 作为 HTML 正文发送。邮箱必须属于当前用户、尚未过期，且所属域名已启用 Resend。角色权限和每日配额与网页登录发件一致。
+
+皇帝从 Catch-all 邮箱发件时，可额外传入 `fromLocalPart` 修改发件前缀，域名固定为该邮箱域名。已注册的 Catch-all 通过邮箱 ID 识别，KV 地址尚未同步时仍可发送；只有未注册的旧配置才使用地址匹配。普通邮箱不能传入此参数。
+
+成功返回 `success: true` 和 `message`；有每日配额的用户还会收到 `remainingEmails`。已发送内容可通过 `type=sent` 列表及邮件详情接口读取。
+
 #### 删除邮箱
 ```http
 DELETE /api/emails/{emailId}
@@ -615,7 +634,7 @@ console.log('分享链接:', `https://app.example.com/shared/message/${data.toke
 
 未知地址的邮件仅在所属域名已配置且启用 Catch-all 时进入该邮箱；系统不会为每个未知地址新建邮箱。已存在但过期的收件地址仍按过期策略丢弃。邮件与 Webhook 保留实际收件地址，发件人优先显示邮件正文头部的 From 地址，缺失时使用 SMTP 信封地址。
 
-Catch-all 重命名保留邮箱 ID 及原邮件，收件通过数据库中的固定关联定位。KV 保存失败时，可直接重试相同配置，系统会复用已创建的邮箱。
+Catch-all 重命名保留邮箱 ID 及原邮件，收件通过数据库中的固定关联定位。并发首次保存会复用先注册的邮箱，后续前缀变更仍保留已有邮件。KV 保存失败时，可直接重试相同配置，系统会复用已创建的邮箱。
 
 Catch-all 列表标识、置顶及删除保护也通过注册的邮箱 ID 判断；配置中的地址尚未同步时，仍不能直接删除该邮箱及原邮件。
 

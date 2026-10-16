@@ -21,6 +21,8 @@ mock.module("../app/lib/auth.ts", { namedExports: { GET: async () => Response.js
 const { getUserId } = await import("../app/lib/apiKey")
 const siteConfig = await import("../app/api/config/route")
 const generate = await import("../app/api/emails/generate/route")
+const mailboxes = await import("../app/api/emails/route")
+const mailbox = await import("../app/api/emails/[id]/route")
 const rolesUsers = await import("../app/api/roles/users/route")
 const userDomains = await import("../app/api/roles/user-domains/route")
 const webhook = await import("../app/api/webhook/route")
@@ -442,6 +444,43 @@ test("API key permissions are bounded even when the owner is emperor", async () 
   }
 })
 
+test("API key clients can create, list, send, read, and delete mailboxes without a session", async t => {
+  sessionId = undefined
+  config.set("EMAIL_DOMAINS", "example.com")
+  sqlite.prepare("INSERT INTO api_keys(id,user_id,name,key,enabled,expires_at) VALUES('key','owner','test','test-key',1,?)")
+    .run(Math.floor(Date.now() / 1000) + 3600)
+  requestHeaders.set("X-API-Key", "test-key")
+  const provider = t.mock.method(globalThis, "fetch", async () => Response.json({ id: "sent" }))
+
+  const settings = await (await siteConfig.GET()).json() as { availableEmailDomains: string[] }
+  assert.deepEqual(settings.availableEmailDomains, ["example.com"])
+  const created = await generate.POST(new Request(request(), {
+    method: "POST", body: JSON.stringify({ name: "api-client", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(created.status, 200)
+  const { id, email } = await created.json() as { id: string; email: string }
+  assert.equal(email, "api-client@example.com")
+  const listed = await mailboxes.GET(new Request("https://app.example.com/api/emails"))
+  assert.equal(listed.status, 200)
+  assert.ok((await listed.json() as { emails: { id: string }[] }).emails.some(row => row.id === id))
+
+  assert.equal((await send.POST(sendRequest(), sendParams(id))).status, 200)
+  assert.equal(provider.mock.callCount(), 1)
+  const sent = await mailbox.GET(new Request(`https://app.example.com/api/emails/${id}?type=sent`), sendParams(id))
+  assert.equal(sent.status, 200)
+  const messages = (await sent.json() as { messages: { id: string }[] }).messages
+  assert.equal(messages.length, 1)
+  const message = await detail.GET(request(), { params: Promise.resolve({ id, messageId: messages[0].id }) })
+  assert.equal(message.status, 200)
+  assert.equal((await message.json() as { message: { html: string } }).message.html, "<p>Hello</p>")
+
+  assert.equal((await mailbox.DELETE(request(), sendParams(id))).status, 200)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE id=?").get(id)?.n, 0)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM message WHERE emailId=?").get(id)?.n, 0)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE id='email'").get()?.n, 1)
+  assert.equal(usedQuota(), 1)
+})
+
 test("per-domain Resend configuration uses each domain's own API key", async t => {
   config.set("EMAIL_DOMAINS", "example.com,other.example")
   const saved = await emailService.POST(new Request(request(), {
@@ -540,6 +579,73 @@ test("Catch-all sender overrides require a valid prefix and a configured Catch-a
   }), sendParams())
   assert.equal(ordinaryMailboxOverride.status, 403)
   assert.equal(usedQuota(), 0)
+})
+
+test("Catch-all sending uses the registered identity through session and API key authentication", async t => {
+  for (const authentication of ["session", "API key"]) {
+    for (const scenario of ["stale address", "stale address with override", "missing config", "legacy address"]) {
+      await t.test(`${authentication}: ${scenario}`, async t => {
+        reset()
+        config.set("EMAIL_DOMAINS", "example.com")
+        sqlite.exec("UPDATE email SET address='renamed@example.com'; UPDATE user_role SET role_id='emperor' WHERE user_id='owner'")
+        sessionRole = "emperor"
+        if (scenario !== "legacy address") {
+          sqlite.exec("INSERT INTO catch_all_mailbox(domain,email_id) VALUES('example.com','email')")
+        }
+        if (scenario !== "missing config") {
+          config.set("CATCHALL_EMAIL", JSON.stringify({
+            "example.com": { address: scenario === "legacy address" ? "renamed@example.com" : "old@example.com", enabled: true, showAlways: true },
+          }))
+        }
+        if (authentication === "API key") {
+          sessionId = undefined
+          sqlite.prepare("INSERT INTO api_keys(id,user_id,name,key,enabled,expires_at) VALUES('key','owner','test','test-key',1,?)")
+            .run(Math.floor(Date.now() / 1000) + 3600)
+          requestHeaders.set("X-API-Key", "test-key")
+        }
+        const provider = t.mock.method(globalThis, "fetch", async () => Response.json({ id: "sent" }))
+        const fromLocalPart = scenario === "stale address" ? "renamed" : "Reply.Team"
+        const response = await send.POST(sendRequest({
+          to: "a@example.com", subject: "Subject", content: "Hello", fromLocalPart,
+        }), sendParams())
+
+        assert.equal(response.status, 200)
+        assert.equal(provider.mock.callCount(), 1)
+        const from = `${fromLocalPart.toLowerCase()}@example.com`
+        assert.equal(JSON.parse(provider.mock.calls[0].arguments[1]?.body as string).from, from)
+        assert.deepEqual({ ...sqlite.prepare("SELECT emailId,from_address FROM message WHERE type='sent'").get() }, {
+          emailId: "email", from_address: from,
+        })
+        assert.equal(usedQuota(), 1)
+      })
+    }
+  }
+})
+
+test("a Catch-all registration never grants sender overrides to other mailboxes or non-emperors", async t => {
+  for (const scenario of ["old address reused", "non-emperor"]) {
+    await t.test(scenario, async () => {
+      reset()
+      config.set("EMAIL_DOMAINS", "example.com")
+      config.set("CATCHALL_EMAIL", JSON.stringify({
+        "example.com": { address: "owner@example.com", enabled: true, showAlways: true },
+      }))
+      sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('catch','renamed@example.com','owner',0,?)")
+        .run(Date.now() + 60_000)
+      sqlite.exec("INSERT INTO catch_all_mailbox(domain,email_id) VALUES('example.com','catch')")
+      if (scenario === "old address reused") {
+        sessionRole = "emperor"
+        sqlite.exec("UPDATE user_role SET role_id='emperor' WHERE user_id='owner'")
+      }
+      const response = await send.POST(sendRequest({
+        to: "a@example.com", subject: "Subject", content: "Hello", fromLocalPart: "spoofed",
+      }), sendParams(scenario === "old address reused" ? "email" : "catch"))
+
+      assert.equal(response.status, 403)
+      assert.equal(usedQuota(), 0)
+      assert.equal(sentCount(), 0)
+    })
+  }
 })
 
 test("send permission is filtered by the mailbox domain", async () => {

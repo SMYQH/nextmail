@@ -54,6 +54,10 @@ npm run preview:worker
 
 `npm test` 运行 Node 单元测试和路由测试，无需外部服务。目前没有配置 Playwright 套件；浏览器检查为手动操作。
 
+上述检查应顺序执行。`npm run build` 的 `prebuild` 会删除旧 `.next` 产物及 `tsconfig.tsbuildinfo`，由本次构建重新生成路由类型和增量状态；OpenNext 构建也会通过该入口执行。构建前请停止本地 `npm run dev`，不要同时运行多个生产或 Worker 构建，以免共享的 `.next` 文件在类型检查期间被另一进程删除。
+
+`CUSTOM_DOMAIN` 使用 Cloudflare 托管的 Worker Custom Domain，主机名不含 `/*`，由 Cloudflare 配置 DNS 与证书。普通 Worker Route 只匹配已有代理 DNS 流量，不能替代独立应用的域名配置；仅发布 Route 可能构建和部署成功，但浏览器仍无法解析域名。
+
 样式使用 Tailwind CSS 4 和 `@tailwindcss/postcss`，主题、暗色变体及动画插件在 `./app/globals.css` 中配置。升级后需检查两种语言、明暗主题、移动端和键盘操作；浏览器最低基线见 [Tailwind CSS 升级说明](https://tailwindcss.com/docs/upgrade-guide#browser-requirements)。
 
 收信 Worker 在解析或数据库写入失败时调用 `setReject`，向发件方返回永久 SMTP 拒绝，不承诺自动重试；发件方需在服务恢复后重新发送。已成功保存的邮件不会因后续 Webhook 查询或投递失败而被拒绝。服务端错误日志仅记录安全错误类型和必要的记录 ID，避免写入邮件正文、SQL 参数或凭据。参见 [Cloudflare 邮件 Worker API](https://developers.cloudflare.com/email-service/api/route-emails/email-handler/)。
@@ -66,13 +70,13 @@ npm run preview:worker
 | --- | --- |
 | `tests/auth-errors.test.ts` | 已知认证错误的准确映射、未知错误的安全回退，以及 `app/i18n/config.ts` 声明语言的非空翻译 |
 | `tests/auth.test.ts` | 真实认证回调、重复及并发注册、输入校验、密码哈希持久化及响应不泄漏密码 |
-| `tests/routes.test.ts` | 会话/API Key 权限、配额预占、并发发送、发送记录、拒绝退款与超时/5xx 不退款、公开邮件分享的到期边界及撤销、皇帝初始化 |
+| `tests/routes.test.ts` | 会话/API Key 权限、无会话 API Key 邮箱操作、Catch-all 发件身份、配额预占、并发发送、发送记录、拒绝退款与超时/5xx 不退款、公开邮件分享的到期边界及撤销、皇帝初始化 |
 | `tests/database.test.ts` | 迁移约束及旧凭据迁移、用户及日期隔离的配额、删除邮箱不重置配额、无限配额记录 |
 | `tests/cleanup.test.ts` | 0/1/99/100/101/251 个过期邮箱、级联删除、到期边界、活跃记录保护及数据库失败传播 |
 | `tests/shared-data.test.ts` | 分享数据访问失效、不同邮箱隔离、隐藏发件及列表正文、分页排序与游标 |
 | `tests/config.test.ts`、`tests/private-cache.test.ts` | 配置失败恢复、请求去重、清理缓存失败时仍可退出登录 |
 | `tests/email-receiver.test.ts`、`tests/safe-error.test.ts` | 收信持久化失败的显式拒绝、已保存邮件不受 Webhook 失败影响、日志脱敏 |
-| `tests/catch-all-config.test.ts` | 域名配置校验、Catch-all 重命名期间收信、KV 保存失败后的重试及稳定邮箱关联 |
+| `tests/catch-all-config.test.ts` | 域名配置校验、Catch-all 重命名期间收信、首次并发保存保留原邮箱及邮件、KV 保存失败后的重试及稳定邮箱关联 |
 | `tests/mailbox-controls.test.ts`、`tests/mailbox-events.test.ts` | Catch-all 置顶及删除保护、已读及删除统计、增量游标及延迟响应的统计隔离 |
 | `tests/latest-request-gate.test.ts`、`tests/message-list-refresh.test.ts` | 过期请求响应隔离及刷新后保留已加载分页游标 |
 | `tests/shared-date.test.ts` | 分享页首屏日期一致、语言和时区格式及永久邮箱到期标记 |
@@ -100,7 +104,7 @@ Webhook 回归测试：请参阅 [Webhook 配置](deploy.md#webhook-setup)。如
 
 邮箱创建与复制：在本地环境分别打开 `/en/mailbox` 和 `/zh-CN/mailbox`，输入带首尾空格的 ` Alice.Tag+news `。预览、键盘复制得到的内容和创建后的地址必须一致，前缀为 `alice.tag+news`。用 Tab 到达复制按钮，分别使用 Enter 和空格复制；反馈必须使用当前语言。再次创建同名地址应显示对应语言的已占用提示。`bad@name`、`bad..name` 应被拒绝；留空仍应创建随机地址。旧路径 `/en/moe` 和 `/zh-CN/moe` 应重定向到对应的 `/mailbox`。
 
-邮箱分页刷新：使用至少 60 个本地邮箱，滚动加载前两页，再点击刷新并继续滚动。已有邮箱应保留，后续分页不应重复，每个邮箱只出现一次。
+邮箱分页刷新：使用至少 60 个本地邮箱，滚动加载前两页，再点击刷新并继续滚动。已有邮箱应保留，后续分页不应重复，每个邮箱只出现一次。切换到其他浏览器标签页再返回，等待同一用户的会话重新验证后，已加载的分页和滚动位置也必须保留；切换用户或域名筛选时则应清空旧列表并从第一页开始。
 
 分享邮件：打开包含 HTML 和纯文本的本地分享邮箱，用 Tab、Enter 和空格选择消息。选择纯文本格式，等待超过 30 秒的自动刷新周期，格式和正文应保持不变。分别检查两种语言、明暗主题、移动端和较矮视口，以及减少动态效果设置；动画结束后截图。
 
@@ -160,6 +164,8 @@ node --import tsx --experimental-test-module-mocks --test tests/catch-all-config
 配置错误语言：分别在 `/en/profile` 和 `/zh-CN/profile` 保存无效 Catch-all 前缀、已占用地址和空的已启用邮箱名，确认提示使用当前语言。模拟未知服务端错误或请求失败时，应显示当前语言的通用保存失败提示，不显示服务端原始文本。
 
 Catch-all 保存恢复：在重命名的数据库写入成功、KV 尚未保存时投递未知地址邮件，必须进入原邮箱。模拟首次保存或重命名时的 KV 写入失败，再提交相同配置，必须复用原邮箱并成功保存；原邮件保留。失败的旧配置仍启用时，收件也必须能通过固定关联进入原邮箱。
+
+Catch-all 并发与发件：让两个首次保存请求使用不同前缀，并在两个请求读取旧配置后交错完成；最终只能保留同一个注册邮箱，先完成请求后的收件不能丢失。重命名后保留旧 KV 地址，分别通过皇帝会话及 API Key 发送原前缀和自定义前缀邮件，应成功并保存正确发件地址；复用旧地址的普通邮箱及非皇帝角色都不能修改发件前缀。
 
 延迟收件：首次快照后插入时间相同但 ID 更小、或时间更早的邮件；增量轮询必须收到它们，列表仍按邮件时间显示。超过一页时逐页排空，插入新邮件及删除全部旧邮件后继续检查，不能遗漏或重复显示。
 

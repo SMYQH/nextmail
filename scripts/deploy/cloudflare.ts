@@ -15,7 +15,7 @@ const client = new Cloudflare({
   apiToken: CF_API_TOKEN,
 });
 
-export type WorkerRoute = { pattern: string; zone_name: string };
+export type WorkerRoute = { pattern: string; zone_name: string; custom_domain?: true };
 type CloudflarePreflightOptions = {
   emailDomain: string;
   customDomain?: string;
@@ -112,7 +112,7 @@ export const verifyCloudflareDeployAccess = async ({
     const hostname = normalizeHostname(customDomain);
     const zone = findZoneForHostname(hostname, zones);
     if (!zone?.id || !zone.name) throw new Error(`No Cloudflare Zone found for ${hostname}`);
-    workerRoute = { pattern: `${hostname}/*`, zone_name: zone.name };
+    workerRoute = { pattern: hostname, zone_name: zone.name, custom_domain: true };
     routeZones.set(zone.name, zone);
   }
 

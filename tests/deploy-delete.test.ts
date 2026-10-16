@@ -344,8 +344,24 @@ for (const { customDomain, workerExists } of deploymentTargets) {
     const config = JSON.parse(readFileSync(join(fixtureDirectory, "wrangler.json"), "utf8"))
     assert.equal(config.workers_dev, workerExists && !customDomain)
     assert.deepEqual(config.routes, workerExists && customDomain
-      ? [{ pattern: "app.example.invalid/*", zone_name: "example.invalid" }]
+      ? [{ pattern: "app.example.invalid", zone_name: "example.invalid", custom_domain: true }]
       : undefined)
     assert.deepEqual(cloudflareState.deleted, [])
   })
 }
+
+test("custom-domain preflight configures a managed hostname without a wildcard or existing DNS dependency", async () => {
+  resetCloudflareState()
+
+  const access = await verifyCloudflareDeployAccess({
+    emailDomain: "example.invalid",
+    customDomain: "https://APP.example.invalid/",
+  })
+
+  assert.deepEqual(access.workerRoute, {
+    pattern: "app.example.invalid",
+    zone_name: "example.invalid",
+    custom_domain: true,
+  })
+  assert.deepEqual(cloudflareState.deleted, [])
+})

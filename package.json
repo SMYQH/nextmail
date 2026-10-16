@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "prebuild": "tsx scripts/deploy/prepare-next-build.ts",
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
