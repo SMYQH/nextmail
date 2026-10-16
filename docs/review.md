@@ -4,12 +4,12 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
-| 113 | Deployment probes mistake Cloudflare detection scripts in successful HTML for a blocking challenge. | Resolved locally: regression checks and live read-only WAF probes pass. |
+| 113 | Deployment probes mistake Cloudflare detection scripts in successful HTML for a blocking challenge. | Resolved: corrected probes pass regression checks and the full production deployment. |
 | 112 | Deployment does not configure project-scoped WAF exceptions for OpenAPI and browser verification. | Resolved: project rules are deployed; live API and front-end probes pass with rate limits preserved. |
-| 111 | Catch-all configuration conflates collection and visibility after disabling it. | Resolved locally: separate labels and explanations in both languages; browser checks preserve saved flags. |
-| 110 | External profile avatars fail without a usable fallback. | Resolved: header and profile avatars load in live desktop/mobile checks; blocked-image fallback passes local browser checks. |
+| 111 | Catch-all configuration conflates collection and visibility after disabling it. | Resolved: separate collection and visibility controls pass local saved-flag checks and live bilingual desktop/mobile checks. |
+| 110 | External profile avatars fail without a usable fallback. | Resolved: header/profile loading and blocked-image fallbacks pass live bilingual desktop/mobile checks. |
 | 109 | HTML message body sometimes appears blank under the All mailbox filter. | Resolved: iframe hardening is deployed; the existing message renders in All and domain views in both locales on desktop/mobile. |
-| 108 | Authenticated production requests intermittently fail with Worker resource-limit errors. | Partially resolved: duplicate middleware authentication is removed locally; current live checks pass, but the earlier CPU-limit failures are not reproduced. |
+| 108 | Authenticated production requests intermittently fail with Worker resource-limit errors. | Partially resolved: duplicate middleware authentication is removed in production; current checks pass, but the earlier CPU-limit failures are not reproduced. |
 | 107 | Redeployed custom hostname has no DNS records and cannot reach the Worker. | Resolved: domain and DNS verified; production UI reached through a temporary WAF exception; normal access remains challenged. |
 | 106 | Configured GitHub token cannot synchronize Actions repository secrets. | Resolved: replacement token synchronized all configured Actions secrets. |
 | 105 | Redeployment fails when generated Next.js route types are missing. | Resolved: production and Worker builds pass; Cloudflare redeployment completed. |

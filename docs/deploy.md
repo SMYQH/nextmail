@@ -135,7 +135,7 @@ GitHub 和 Google 登录均为可选项。每个登录方式只有在其 ID 和 
 - Cloudflare KV namespace 名称固定为 `nextmail-kv`，用于存储网站配置。
 - `KV_NAMESPACE_ID`: Cloudflare KV namespace ID，用于存储网站配置 （可选， 如果不填, 则会自动通过 Cloudflare API 获取）
 - `CUSTOM_DOMAIN`: 网站自定义主机名，例如 `app.example.com`（可选）；必须属于此 Cloudflare 账号管理的 Zone。部署脚本使用 Worker Custom Domain，由 Cloudflare 自动配置 DNS 和证书，无需预先创建代理 DNS 记录；留空时启用 `workers.dev` 地址。此主机名应专供当前应用使用，部署会将它绑定到 NextMail；`pages.dev` 不属于你的 Zone，不能作为此项。
-- `OPENAPI_WAF_VERIFY_SECRET`: 设置 `CUSTOM_DOMAIN` 时必填，32–128 位 URL-safe 随机值，仅供部署脚本向 `/api/emails` 发送 WAF 验证请求；存放在 `.env.deploy` 或 GitHub Actions Secret 中。它不会进入 Worker 环境或应用构建文件，但会出现在 Cloudflare WAF 规则表达式中。
+- `OPENAPI_WAF_VERIFY_SECRET`: 设置 `CUSTOM_DOMAIN` 时必填，32–128 位 URL-safe 随机值，供部署脚本和自动化浏览器通过验证请求头访问项目页面、资源和 API；存放在 `.env.deploy` 或 GitHub Actions Secret 中。它不会进入 Worker 环境或应用构建文件，但会出现在 Cloudflare WAF 规则表达式中。
 - `EMAIL_DOMAIN`: 收件邮箱域名，例如 `example.com`；必须与此 Cloudflare 账号中匹配到的 Zone 名称完全一致。部署脚本会配置该 Zone 的 Catch All；若填写的子域名只匹配到父 Zone，脚本会在数据库修改和发布前停止，避免更改父域的 Catch All。使用子域名收信时，先完成 [Email Routing 子域名配置](https://developers.cloudflare.com/email-service/configuration/subdomains/)，并确认该子域名能匹配到独立的同名 Zone。
 
 从旧版普通 Worker Route 升级时，确认 Custom Domain 绑定成功后，在 Cloudflare 中移除同一主机名、指向 `nextmail` 的旧 `HOST/*` Route。Wrangler 发布 Custom Domain 后可能仍保留旧 Route；其他主机或其他 Worker 的路由应保留。
