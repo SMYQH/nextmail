@@ -234,7 +234,7 @@ export async function POST(request: Request) {
         : undefined)
       const ownedCurrentEmail = configuredEmail?.userId === userId ? configuredEmail : undefined
       const emailAtDesiredAddress = await findEmailByAddress(db, address)
-      if (emailAtDesiredAddress && emailAtDesiredAddress.id !== ownedCurrentEmail?.id) {
+      if ((registered && !ownedCurrentEmail) || (emailAtDesiredAddress && emailAtDesiredAddress.id !== ownedCurrentEmail?.id)) {
         return Response.json({ error: `邮箱地址已被占用: ${address}`, code: "CATCH_ALL_ADDRESS_OCCUPIED" }, { status: 409 })
       }
 
@@ -244,22 +244,17 @@ export async function POST(request: Request) {
 
     const noExpiry = new Date("9999-01-01T00:00:00.000Z")
     const mailboxWrites = mailboxPlans.flatMap(plan => {
+      // Claim a domain once. A save planned before another request committed
+      // must rename the winning mailbox rather than replace its identity.
+      const creation = !plan.currentEmail ? [env.DB.prepare(
+        "INSERT INTO email (id, address, userId, created_at, expires_at) SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS (SELECT 1 FROM catch_all_mailbox WHERE domain = ?)",
+      ).bind(plan.emailId, plan.address, userId, Date.now(), noExpiry.getTime(), plan.domain)] : []
       const registration = env.DB.prepare(
-        "INSERT INTO catch_all_mailbox (domain, email_id) VALUES (?, ?) ON CONFLICT(domain) DO UPDATE SET email_id = excluded.email_id",
+        "INSERT INTO catch_all_mailbox (domain, email_id) VALUES (?, ?) ON CONFLICT(domain) DO NOTHING",
       ).bind(plan.domain, plan.emailId)
-      if (!plan.currentEmail) {
-        return [env.DB.prepare(
-          "INSERT INTO email (id, address, userId, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
-        ).bind(plan.emailId, plan.address, userId, Date.now(), noExpiry.getTime()), registration]
-      }
-
-      if (plan.currentEmail.address === plan.address && plan.currentEmail.expiresAt.getTime() === noExpiry.getTime()) {
-        return [registration]
-      }
-
-      return [env.DB.prepare(
-        "UPDATE email SET address = ?, expires_at = ? WHERE id = ? AND userId = ?",
-      ).bind(plan.address, noExpiry.getTime(), plan.currentEmail.id, userId), registration]
+      return [...creation, registration, env.DB.prepare(
+        "UPDATE email SET address = ?, expires_at = ? WHERE id = (SELECT email_id FROM catch_all_mailbox WHERE domain = ?) AND userId = ?",
+      ).bind(plan.address, noExpiry.getTime(), plan.domain, userId)]
     })
 
     if (mailboxWrites.length) {

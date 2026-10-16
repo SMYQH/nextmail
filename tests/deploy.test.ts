@@ -1,7 +1,7 @@
 import test from "node:test"
 import assert from "node:assert/strict"
 import { assertWebhookDeployment } from "../scripts/deploy/webhook-config"
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { assertOpenNextBuild } from "../scripts/deploy/validate-worker-build"
@@ -9,6 +9,41 @@ import { assertSafeBuildEnv } from "../scripts/deploy/validate-build-env"
 import { execFileSync } from "node:child_process"
 import { resolve } from "node:path"
 import { buildAndPreflightBeforeMigration, buildWorkerCandidate } from "../scripts/deploy/worker-deployment-sequence"
+import { prepareNextBuild } from "../scripts/deploy/prepare-next-build"
+
+test("production builds discard incomplete route types and incremental state without touching source or local data", t => {
+  const directory = mkdtempSync(join(tmpdir(), "nextmail-build-cache-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  mkdirSync(join(directory, ".next/types/app/removed"), { recursive: true })
+  writeFileSync(join(directory, ".next/types/app/removed/page.ts"), "stale route type")
+  mkdirSync(join(directory, ".next/cache"), { recursive: true })
+  writeFileSync(join(directory, ".next/cache/.tsbuildinfo"), "stale build state")
+  writeFileSync(join(directory, "tsconfig.tsbuildinfo"), "stale standalone check")
+  for (const file of ["app/page.tsx", ".wrangler/state/local.sqlite", ".env.deploy"]) {
+    mkdirSync(join(directory, file, ".."), { recursive: true })
+    writeFileSync(join(directory, file), "preserved")
+  }
+
+  prepareNextBuild(directory)
+
+  assert.equal(existsSync(join(directory, ".next")), false)
+  assert.equal(existsSync(join(directory, "tsconfig.tsbuildinfo")), false)
+  for (const file of ["app/page.tsx", ".wrangler/state/local.sqlite", ".env.deploy"]) {
+    assert.equal(readFileSync(join(directory, file), "utf8"), "preserved")
+  }
+  assert.doesNotThrow(() => prepareNextBuild(directory))
+})
+
+test("build preparation rejects exposed deployment credentials before changing generated output", t => {
+  const directory = mkdtempSync(join(tmpdir(), "nextmail-build-unsafe-env-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  mkdirSync(join(directory, ".next"))
+  writeFileSync(join(directory, ".next/BUILD_ID"), "previous-build")
+  writeFileSync(join(directory, ".env.local"), "CLOUDFLARE_API_TOKEN=synthetic-private-value")
+
+  assert.throws(() => prepareNextBuild(directory), /\.env\.local contains deployment credential CLOUDFLARE_API_TOKEN/)
+  assert.equal(readFileSync(join(directory, ".next/BUILD_ID"), "utf8"), "previous-build")
+})
 
 test("deployment loads its separate env file before initializing Cloudflare and respects CI values", t => {
   const directory = mkdtempSync(join(tmpdir(), "nextmail-deploy-env-"))

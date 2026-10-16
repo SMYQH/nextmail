@@ -4,6 +4,12 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 107 | Redeployed custom hostname has no DNS records and cannot reach the Worker. | Resolved: managed domain and DNS verified; both locales render in remote preview; public access is challenged. |
+| 106 | Configured GitHub token cannot synchronize Actions repository secrets. | Resolved: replacement token synchronized all configured Actions secrets. |
+| 105 | Redeployment fails when generated Next.js route types are missing. | Resolved: production and Worker builds pass; Cloudflare redeployment completed. |
+| 104 | Session revalidation discards loaded mailbox pages and scroll position. | Resolved locally: browser component checks retain pages and viewport; full-page authentication unverified. |
+| 103 | Catch-all sender checks reject renamed mailboxes and can authorize reused stale addresses. | Resolved locally: registered identities pass session and API-key regressions; live delivery unverified. |
+| 102 | Concurrent first Catch-all saves replace the winning mailbox identity. | Resolved locally: overlapping saves retain one mailbox and its deliveries; remote concurrency unverified. |
 | 101 | Sending setup still describes one global service switch and key. | Resolved locally: instructions match per-domain configuration. |
 | 100 | Daily quota reset omits its timezone. | Resolved locally: documentation specifies UTC. |
 | 99 | Webhook test instructions overstate logged message details. | Resolved locally: documentation matches subject-only logging. |

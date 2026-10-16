@@ -49,8 +49,14 @@ interface EmailResponse {
   total?: number
 }
 
+interface EmailListScope {
+  userId: string | undefined
+  domain: string
+}
+
 export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const { data: session } = useSession()
+  const userId = session?.user?.id
   const { config } = useConfig()
   const { role } = useUserRole()
   const t = useTranslations("emails.list")
@@ -59,6 +65,8 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const [domain, setDomain] = useState("")
   const gateRef = useRef(new LatestRequestGate())
   const emailsRef = useRef<Email[]>([])
+  const emailListScopeRef = useRef<EmailListScope | null>(null)
+  const emailListContainerRef = useRef<HTMLDivElement>(null)
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [nextCursor, setNextCursor] = useState<string | null>(null)
@@ -141,13 +149,24 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   }, 200)
 
   useEffect(() => {
-    replaceEmails([])
-    replaceNextCursor(null)
-    setLoading(true)
+    const scope = { userId, domain }
+    const previousScope = emailListScopeRef.current
+    const resetList = previousScope === null || previousScope.userId !== userId || previousScope.domain !== domain
+    emailListScopeRef.current = scope
+    if (resetList) {
+      replaceEmails([])
+      replaceNextCursor(null)
+      setLoading(true)
+      setRefreshing(false)
+      setLoadingMore(false)
+      setTotal(0)
+      setEmailToDelete(null)
+      if (emailListContainerRef.current) emailListContainerRef.current.scrollTop = 0
+    }
     if (session) fetchEmails()
     const gate = gateRef.current
     return () => gate.invalidate()
-  }, [session, fetchEmails, replaceEmails, replaceNextCursor])
+  }, [session, userId, domain, fetchEmails, replaceEmails, replaceNextCursor])
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -236,7 +255,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
             </Button>
           ))}
         </div>
-        <div className="flex-1 overflow-auto p-1.5" onScroll={handleScroll}>
+        <div ref={emailListContainerRef} className="flex-1 overflow-auto p-1.5" onScroll={handleScroll}>
           {loading ? (
             <div className="text-center text-sm text-muted-foreground">{t("loading")}</div>
           ) : emails.length > 0 ? (

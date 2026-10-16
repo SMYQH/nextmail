@@ -116,6 +116,22 @@ test("Catch-all cannot claim a mailbox owned by another user", async () => {
   assert.equal(config.has("CATCHALL_EMAIL"), false)
 })
 
+test("Catch-all cannot replace another user's registered mailbox", async () => {
+  sqlite.prepare("INSERT INTO email(id, address, userId, created_at, expires_at) VALUES (?, ?, ?, ?, ?)")
+    .run("other-catch-all", "old@example.com", "other", Date.now(), Date.now() + 60_000)
+  sqlite.exec("INSERT INTO catch_all_mailbox(domain,email_id) VALUES('example.com','other-catch-all')")
+
+  const response = await saveConfig({
+    domains: { "example.com": { enabled: true, showAlways: true, mailboxName: "new" } },
+  })
+
+  assert.equal(response.status, 409)
+  assert.equal((await response.json() as { code: string }).code, "CATCH_ALL_ADDRESS_OCCUPIED")
+  assert.equal(sqlite.prepare("SELECT email_id FROM catch_all_mailbox WHERE domain='example.com'").get()?.email_id, "other-catch-all")
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 1)
+  assert.equal(config.has("CATCHALL_EMAIL"), false)
+})
+
 test("renaming a configured Catch-all preserves its mailbox record", async () => {
   const firstSave = await saveConfig({
     domains: { "example.com": { enabled: true, showAlways: true, mailboxName: "inbox" } },
@@ -259,4 +275,46 @@ test("initial Catch-all creation retries recover the same mailbox after a KV fai
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 1)
   assert.deepEqual(await receiveUnknownMail(), [])
   assert.equal(sqlite.prepare("SELECT emailId FROM message").get()?.emailId, created)
+})
+
+test("overlapping first Catch-all saves reuse the winning registration and delivered mail", async t => {
+  for (const mailboxName of ["first", "second"]) {
+    await t.test(mailboxName === "first" ? "same prefix" : "different prefixes", async t => {
+      reset()
+      const batch = d1.batch.bind(d1)
+      let releaseFirst!: () => void
+      let notifyFirst!: () => void
+      const firstWaiting = new Promise<void>(resolve => { notifyFirst = resolve })
+      const firstAllowed = new Promise<void>(resolve => { releaseFirst = resolve })
+      let calls = 0
+      t.mock.method(d1, "batch", async (statements: D1PreparedStatement[]) => {
+        if (++calls === 1) {
+          notifyFirst()
+          await firstAllowed
+        }
+        return batch(statements)
+      })
+      t.after(releaseFirst)
+      const settings = (name: string) => ({
+        domains: { "example.com": { enabled: true, showAlways: true, mailboxName: name } },
+      })
+
+      const firstSave = saveConfig(settings("first"))
+      await firstWaiting
+      try {
+        assert.equal((await saveConfig(settings(mailboxName))).status, 200)
+        assert.deepEqual(await receiveUnknownMail(), [])
+      } finally {
+        releaseFirst()
+      }
+      const winningId = sqlite.prepare("SELECT emailId FROM message").get()?.emailId
+      assert.ok(winningId)
+      assert.equal((await firstSave).status, 200)
+      assert.equal(sqlite.prepare("SELECT email_id FROM catch_all_mailbox WHERE domain='example.com'").get()?.email_id, winningId)
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 1)
+      assert.equal(sqlite.prepare("SELECT address FROM email WHERE id=?").get(winningId)?.address, "first@example.com")
+      assert.deepEqual(await receiveUnknownMail(), [])
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM message WHERE emailId=?").get(winningId)?.n, 2)
+    })
+  }
 })

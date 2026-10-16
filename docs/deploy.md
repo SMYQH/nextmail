@@ -16,6 +16,8 @@ OpenNext 应用运行在 Cloudflare Workers。主 Worker 使用 `nodejs_compat`�
 
 在 Linux（包括 GitHub Actions）或 WSL 内部使用 Linux Node.js 24 和全新的 `npm ci` 构建 OpenNext Worker。不要复用 Windows 的 `node_modules`。OpenNext 目前会警告 Windows 构建不受完整支持；`npm run build:worker` 会生成 Worker 并检查 `.open-next/worker.js`、静态资源目录、D1/KV 绑定和运行时标志。在 Windows 上，Next.js 开发、lint 和单元测试仍然可用。
 
+每次生产构建会先通过 `prebuild` 删除旧 `.next` 产物及 `tsconfig.tsbuildinfo`，再重新生成 Next.js 路由类型，避免复用不完整的类型和增量缓存。部署前请停止本地开发服务器，顺序运行验证命令，不要并行执行 `npm run build`、`npm run build:worker` 或多个部署进程；它们共享 `.next` 目录。出现 `.next/types/... not found` 时无需创建占位类型文件或关闭类型检查，先确认没有其他构建或开发进程，再重新运行构建。
+
 ### 本地部署脚本
 
 1. 复制 `.env.deploy.example` 为 `.env.deploy` 并填写[环境变量](#环境变量)。`.env.deploy` 已被 Git 忽略，本地部署从此文件读取部署配置，也兼容读取 `.env` 中的应用配置。OpenNext 会把应用 `.env*` 编译进 Worker，因此部署令牌只能放在 `.env.deploy` 或进程环境中；构建会拒绝应用环境文件中的部署令牌。旧配置请将部署参数移入 `.env.deploy`。
@@ -64,7 +66,7 @@ npm run delete
 
 清理范围仅限 `nextmail`、`email-receiver-worker`、`cleanup-worker` 三个 Worker，项目配置中指向 `nextmail` 的精确路由、名称为 `nextmail-kv` 的 KV namespace、名称为 `nextmail-d1` 的 D1 数据库，以及仍将邮件转发到 `email-receiver-worker` 的 `EMAIL_DOMAIN` Catch All。D1 数据库删除会移除其中的应用数据；执行前请先备份。Catch All API 没有删除该规则的操作，脚本会在它仍指向 NextMail Worker 时将其禁用。原有 Catch All 若曾被部署覆盖，项目没有保存其旧配置，清理时无法恢复。
 
-脚本不会删除 Cloudflare Zone 或 DNS 记录，也不会修改 GitHub 仓库、Actions Secrets、OAuth 应用、本地 `.env.deploy` 或 Wrangler 配置。清理后，`wrangler.json` 仍保留上次部署的资源 ID 和路由；再次部署时若显式设置的 `DATABASE_ID` 或 `KV_NAMESPACE_ID` 指向已删除资源，需要先清除或更新这些覆盖值。该流程不是原子操作；若 Cloudflare API 在部分删除后失败，可以再次运行，已不存在的 Worker、路由或资源会被跳过。
+脚本不会删除 Cloudflare Zone 或直接调用 DNS API，也不会修改 GitHub 仓库、Actions Secrets、OAuth 应用、本地 `.env.deploy` 或 Wrangler 配置。Worker Custom Domain 的 DNS 和证书由 Cloudflare 托管；再次部署会按 `CUSTOM_DOMAIN` 建立关联。清理后，`wrangler.json` 仍保留上次部署的资源 ID 和路由；再次部署时若显式设置的 `DATABASE_ID` 或 `KV_NAMESPACE_ID` 指向已删除资源，需要先清除或更新这些覆盖值。该流程不是原子操作；若 Cloudflare API 在部分删除后失败，可以再次运行，已不存在的 Worker、路由或资源会被跳过。
 
 ### Github Actions 部署
 
@@ -122,8 +124,10 @@ GitHub 和 Google 登录均为可选项。每个登录方式只有在其 ID 和 
 - `DATABASE_ID`: 可选，手动指定账户中 `nextmail-d1` 的数据库 ID；未设置时按名称查找或创建。脚本使用指定 ID，不校验该数据库的名称，迁移会直接写入此 ID 对应的数据库，运行前必须核对目标。
 - Cloudflare KV namespace 名称固定为 `nextmail-kv`，用于存储网站配置。
 - `KV_NAMESPACE_ID`: Cloudflare KV namespace ID，用于存储网站配置 （可选， 如果不填, 则会自动通过 Cloudflare API 获取）
-- `CUSTOM_DOMAIN`: 网站自定义主机名，例如 `app.example.com`（可选）；必须属于此 Cloudflare 账号管理的 Zone 且 DNS 已代理。部署脚本将其路由到 Worker；留空时启用 `workers.dev` 地址。`pages.dev` 不属于你的 Zone，不能作为此项。
+- `CUSTOM_DOMAIN`: 网站自定义主机名，例如 `app.example.com`（可选）；必须属于此 Cloudflare 账号管理的 Zone。部署脚本使用 Worker Custom Domain，由 Cloudflare 自动配置 DNS 和证书，无需预先创建代理 DNS 记录；留空时启用 `workers.dev` 地址。此主机名应专供当前应用使用，部署会将它绑定到 NextMail；`pages.dev` 不属于你的 Zone，不能作为此项。
 - `EMAIL_DOMAIN`: 收件邮箱域名，例如 `example.com`；必须与此 Cloudflare 账号中匹配到的 Zone 名称完全一致。部署脚本会配置该 Zone 的 Catch All；若填写的子域名只匹配到父 Zone，脚本会在数据库修改和发布前停止，避免更改父域的 Catch All。使用子域名收信时，先完成 [Email Routing 子域名配置](https://developers.cloudflare.com/email-service/configuration/subdomains/)，并确认该子域名能匹配到独立的同名 Zone。
+
+从旧版普通 Worker Route 升级时，确认 Custom Domain 绑定成功后，在 Cloudflare 中移除同一主机名、指向 `nextmail` 的旧 `HOST/*` Route。Wrangler 发布 Custom Domain 后可能仍保留旧 Route；其他主机或其他 Worker 的路由应保留。
 
 ### GitHub 同步配置
 

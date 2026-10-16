@@ -3,7 +3,7 @@ import { PERMISSIONS, ROLES } from "@/lib/permissions"
 import { NextResponse } from "next/server"
 import { getUserId } from "@/lib/apiKey"
 import { createDb } from "@/lib/db"
-import { emails, messages } from "@/lib/schema"
+import { catchAllMailboxes, emails, messages } from "@/lib/schema"
 import { eq } from "drizzle-orm"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
 import { getUserRole } from "@/lib/auth"
@@ -112,10 +112,14 @@ export async function POST(
 
     let fromAddress = normalizeEmailAddress(email.address)
     if (fromLocalPart !== undefined) {
+      const domain = getEmailDomain(fromAddress)
       const catchAllConfig = parseCatchAllEmailConfig(catchAllConfigValue)
-      const isConfiguredCatchAll = Object.values(catchAllConfig).some(({ address }) => (
-        normalizeEmailAddress(address) === fromAddress
-      ))
+      const registered = domain ? await db.query.catchAllMailboxes.findFirst({
+        where: eq(catchAllMailboxes.domain, domain),
+      }) : undefined
+      const isConfiguredCatchAll = registered
+        ? registered.emailId === email.id
+        : Boolean(domain && catchAllConfig[domain]?.address === fromAddress)
       const userRole = await getUserRole(userId)
 
       if (!isConfiguredCatchAll || userRole !== ROLES.EMPEROR) {
@@ -126,7 +130,6 @@ export async function POST(
       }
 
       const normalizedLocalPart = normalizeMailboxName(fromLocalPart)
-      const domain = getEmailDomain(fromAddress)
       if (!domain || !isValidMailboxName(normalizedLocalPart)) {
         return NextResponse.json({ error: "发件邮箱前缀格式无效" }, { status: 400 })
       }

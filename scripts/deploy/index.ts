@@ -198,7 +198,7 @@ const updateWorkerExposure = (route?: WorkerRoute, privateWorker = false) => {
   console.log(privateWorker
     ? "Keeping the initial Worker private while its secrets are installed"
     : route
-      ? "Configured Worker route " + route.pattern
+      ? "Configured Worker custom domain " + route.pattern
       : "Configured the Worker workers.dev endpoint");
 };
 
