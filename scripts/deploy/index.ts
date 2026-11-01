@@ -8,38 +8,38 @@ import {
   createDatabase,
   createKVNamespace,
   getDatabase,
+  getKVNamespace,
   getKVNamespaceList,
   getEnabledWebhookUrls,
   configureEmailCatchAll,
   configureOpenApiWaf,
+  getEmailCatchAll,
+  recordPreviousCatchAll,
   verifyCloudflareDeployAccess,
+  getOptionalKVValue,
+  putKVValue,
+  queryDeploymentDatabase,
   WORKER_NAME,
   type WorkerRoute,
 } from "./cloudflare";
 import { assertWebhookDeployment } from "./webhook-config";
 import { syncLocalGitHubSecrets } from "./github-secrets";
-import { assertSafeBuildEnv } from "./validate-build-env";
+import { assertRequiredDeployEnv } from "./required-env";
 import { buildAndPreflightBeforeMigration, buildWorkerCandidate } from "./worker-deployment-sequence";
+import { readAdminDeploymentConfig, applyAdminSiteSettings, applyAdminCatchAllSettings, type AdminConfigStore } from "./admin-config";
+import { readAdminUsers, applyAdminUsers } from "./admin-users";
 import { assertOpenApiWafVerifySecret } from "./waf-config";
 import { verifyOpenApiHttpBehavior } from "./waf-runtime-verification";
 
 const DATABASE_NAME = "nextmail-d1";
 const KV_NAMESPACE_NAME = "nextmail-kv";
-const KV_NAMESPACE_ID = process.env.KV_NAMESPACE_ID;
+const KV_NAMESPACE_ID = process.env.KV_NAMESPACE_ID?.trim();
 
 /**
  * 验证必要的环境变量
  */
 const validateEnvironment = () => {
-  assertSafeBuildEnv();
-  const requiredEnvVars = ["CLOUDFLARE_ACCOUNT_ID", "CLOUDFLARE_API_TOKEN", "AUTH_SECRET", "EMAIL_DOMAIN"];
-  const missing = requiredEnvVars.filter((varName) => !process.env[varName]);
-
-  if (missing.length > 0) {
-    throw new Error(
-      `Missing required environment variables: ${missing.join(", ")}`
-    );
-  }
+  assertRequiredDeployEnv();
 
   if (process.env.CUSTOM_DOMAIN?.trim()) {
     assertOpenApiWafVerifySecret(process.env.OPENAPI_WAF_VERIFY_SECRET, process.env.AUTH_SECRET);
@@ -121,6 +121,11 @@ const checkAndCreateDatabase = async () => {
       return created.uuid;
     }
 
+    // A configured DATABASE_ID must still point at this project's database.
+    if (database.name !== DATABASE_NAME) {
+      throw new Error(`Resolved D1 database is not named "${DATABASE_NAME}"; refusing to bind the Worker to it.`);
+    }
+
     updateDatabaseConfig(database.uuid);
     console.log(`✅ Database "${DATABASE_NAME}" already exists (ID: ${database.uuid})`);
     return database.uuid;
@@ -151,10 +156,13 @@ const checkAndCreateDatabase = async () => {
 /**
  * 迁移数据库
  */
-const migrateDatabase = () => {
+const migrateDatabase = (appliedDefaultRole?: string) => {
   console.log("📝 Migrating remote database...");
   try {
-    execSync("npm run db:migrate-remote", { stdio: "inherit" });
+    execSync("npm run db:migrate-remote", {
+      stdio: "inherit",
+      env: { ...process.env, NEXTMAIL_DEPLOY_DEFAULT_ROLE: appliedDefaultRole || "" },
+    });
     console.log("✅ Database migration completed successfully");
   } catch (error) {
     console.error("❌ Database migration failed:", error);
@@ -169,9 +177,22 @@ const checkAndCreateKVNamespace = async () => {
   console.log(`🔍 Checking if KV namespace "${KV_NAMESPACE_NAME}" exists...`);
 
   if (KV_NAMESPACE_ID) {
+    // A configured namespace ID must still point at this project's namespace.
+    let configured: Awaited<ReturnType<typeof getKVNamespace>> | undefined;
+    try {
+      configured = await getKVNamespace(KV_NAMESPACE_ID);
+    } catch (error) {
+      if (!(error instanceof NotFoundError)) throw error;
+    }
+    if (!configured) {
+      throw new Error(`KV_NAMESPACE_ID ${KV_NAMESPACE_ID} was not found in this account; refusing to bind the Worker to it.`);
+    }
+    if (configured.title !== KV_NAMESPACE_NAME) {
+      throw new Error(`KV_NAMESPACE_ID does not point to the project namespace "${KV_NAMESPACE_NAME}"; refusing to bind the Worker to it.`);
+    }
     updateKVConfig(KV_NAMESPACE_ID);
     console.log(`✅ User specified KV namespace (ID: ${KV_NAMESPACE_ID})`);
-    return;
+    return KV_NAMESPACE_ID;
   }
 
   try {
@@ -189,10 +210,29 @@ const checkAndCreateKVNamespace = async () => {
       updateKVConfig(namespace.id);
       console.log(`✅ KV namespace "${KV_NAMESPACE_NAME}" created successfully (ID: ${namespace.id})`);
     }
+    return namespace.id;
   } catch (error) {
     console.error(`❌ An error occurred while checking the KV namespace:`, error);
     throw error;
   }
+};
+
+/**
+ * Records the Catch-all rule that is in place before this project takes over
+ * the zone, so the cleanup can restore it instead of leaving the zone disabled.
+ */
+const recordPreviousCatchAllBeforeOverwrite = async (zoneId: string) => {
+  const namespaceId = KV_NAMESPACE_ID?.trim()
+    || (await getKVNamespaceList()).find(namespace => namespace.title === KV_NAMESPACE_NAME)?.id;
+  if (!namespaceId) {
+    console.log("ℹ️ No project KV namespace is available; the previous Catch-all rule is not recorded");
+    return;
+  }
+  const rule = await getEmailCatchAll(zoneId);
+  const recorded = await recordPreviousCatchAll(namespaceId, zoneId, rule);
+  console.log(recorded
+    ? `✅ Recorded the previous Email Routing Catch-all rule in KV namespace ${namespaceId}`
+    : `ℹ️ A previous Email Routing Catch-all rule is already recorded in KV namespace ${namespaceId}`);
 };
 
 const updateWorkerExposure = (route?: WorkerRoute, privateWorker = false) => {
@@ -268,6 +308,11 @@ export const main = async () => {
     console.log("🚀 Starting deployment process...");
 
     validateEnvironment();
+    // Parse all explicit settings before a build or any remote changes.
+    const adminConfig = readAdminDeploymentConfig(process.env);
+    const adminUsers = readAdminUsers(process.env);
+    let siteConfig: AdminConfigStore;
+    let configuredDomains: string[] = [];
     const openApiWafVerifySecret = process.env.CUSTOM_DOMAIN?.trim()
       ? assertOpenApiWafVerifySecret(process.env.OPENAPI_WAF_VERIFY_SECRET, process.env.AUTH_SECRET)
       : undefined;
@@ -288,7 +333,7 @@ export const main = async () => {
     } else {
       console.log("ℹ️ OpenAPI WAF rules require CUSTOM_DOMAIN; workers.dev does not provide a customer-managed Zone.");
     }
-    await buildAndPreflightBeforeMigration(
+    const databaseId = await buildAndPreflightBeforeMigration(
       () => {
         updateWorkerExposure(workerRoute, !workerExists);
         buildWorkerCandidate(command => execSync(command, { stdio: "inherit" }));
@@ -300,15 +345,29 @@ export const main = async () => {
         if (openApiWafTarget && openApiWafVerifySecret) {
           await configureOpenApiWaf(openApiWafTarget, openApiWafVerifySecret);
         }
+        const namespaceId = await checkAndCreateKVNamespace();
+        if (!namespaceId) throw new Error("Project KV namespace has no ID");
+        siteConfig = {
+          get: key => getOptionalKVValue(namespaceId, key),
+          put: async (key, value) => {
+            try { await putKVValue(namespaceId, key, value); }
+            catch { throw new Error(`Could not save deployment setting ${key}`); }
+          },
+        };
+        // Resolve the selected namespace and defaults before the one-time role backfill.
+        configuredDomains = await applyAdminSiteSettings(adminConfig, siteConfig);
         return id;
       },
-      migrateDatabase,
+      () => migrateDatabase(adminConfig.values.DEFAULT_ROLE),
     );
-    await checkAndCreateKVNamespace();
+    const query = (sql: string, params?: string[]) => queryDeploymentDatabase(databaseId, sql, params);
+    await applyAdminUsers(adminUsers, query, configuredDomains, process.env.WEBHOOK_ALLOWED_HOSTS || "");
+    await applyAdminCatchAllSettings(adminConfig, siteConfig!, query);
     await syncLocalGitHubSecrets();
     deployOpenNextWorker(workerRoute, workerExists);
     deployEmailWorker();
     deployCleanupWorker();
+    await recordPreviousCatchAllBeforeOverwrite(emailCatchAllTarget.zone.id!);
     await configureEmailCatchAll(emailCatchAllTarget);
 
     if (openApiWafTarget && openApiWafVerifySecret) {

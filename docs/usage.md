@@ -2,7 +2,7 @@
 
 ## 邮箱域名配置
 
-在 NextMail 个人中心页面，可以配置网站的邮箱域名，支持多域名配置，多个域名用逗号分隔。
+皇帝可在个人中心配置网站的邮箱域名，支持多域名配置，多个域名用逗号分隔。完整部署也支持从 `.env.deploy` 初始化这些设置，首次未显式填写 `EMAIL_DOMAINS` 时使用 `EMAIL_DOMAIN`；可选部署项见 [部署说明](deploy.md#部署时初始化后台设置)。
 
 ### Cloudflare 邮件路由配置
 
@@ -61,7 +61,7 @@
    - 可以配置 Webhook
    - 可以被皇帝贬为平民或册封为公爵
 
-3. **平民（Civilian）**
+4. **平民（Civilian）**
    - 普通用户
    - 无任何权限
    - 可以被皇帝册封为骑士或者公爵
@@ -94,12 +94,19 @@
 - `DEFAULT_ROLE`: 新注册用户默认角色，可选值为 `civilian`、`knight`、`duke`
 - `EMAIL_DOMAINS`: 支持的邮箱域名，多个域名用逗号分隔
 - `ADMIN_CONTACT`: 管理员联系方式
-- `MAX_EMAILS`: 每个非皇帝用户可创建的最大活跃邮箱数量，默认值为 30；皇帝不受此限制
+- `MAX_EMAILS`: 每个非皇帝用户可创建的最大活跃邮箱数量，必须是 1 至 9007199254740991 的安全整数；无效配置保存时返回 HTTP 400，旧的无效存储值按默认值 30 执行。皇帝不受此限制
 - `CATCHALL_EMAIL`: 按域名保存 Catch-all 地址、启用状态和停用后的显示设置
 - `RESEND_CONFIG`: 按域名保存 Resend 启用状态和 API Key，仅皇帝可管理
 - `EMAIL_ROLE_LIMITS`: 保存公爵和骑士的每日发件限额
+- `TURNSTILE_ENABLED`、`TURNSTILE_SITE_KEY`、`TURNSTILE_SECRET_KEY`: Cloudflare Turnstile 人机验证配置，仅皇帝可管理
 
 **皇帝**角色可以在个人中心页面设置
+
+## 批量删除邮箱账号
+
+在邮箱列表中勾选需要删除的账号（每批最多 40 个），点击“删除所选”并核对确认框。删除同时移除这些账号的收件、发件记录及其分享链接，不能撤销；每日发件用量不因删除而重置。Catch-all 系统邮箱不参与批量选择。跨分页保留选择，可用“清除选择”取消；切换域名时会清空选择，未加载的账号不会被自动选中。
+
+接口只允许删除当前用户拥有、尚未过期且不属于 Catch-all 的邮箱；任意一个不符合条件时整批失败，不会部分删除。失败后保留选择，便于重试。
 
 ## 发件功能
 
@@ -197,8 +204,12 @@ X-Webhook-Event: new_message
 1. 点击个人头像，进入个人中心
 2. 在个人中心启用 Webhook
 3. 设置接收通知的 URL
-4. 点击测试按钮验证配置
-5. 保存配置后即可接收新邮件通知
+4. 保存配置
+5. 点击测试按钮验证配置
+
+保存后才能测试：测试请求要求数据库中已存在相同 URL 的 Webhook 记录，否则返回 HTTP 400 和 `saveBeforeTest`。
+
+Webhook 签名密钥只在服务端保存和使用，不会通过接口返回。`GET /api/webhook` 仅返回 `enabled`、`url`、`hasSecret` 和 `setupError`，并带有 `Cache-Control: no-store`。
 
 ### 测试
 
@@ -230,6 +241,16 @@ cloudflared tunnel --url http://localhost:3001
 X-API-Key: YOUR_API_KEY
 ```
 
+API Key 管理使用有权限的登录会话：`POST /api/api-keys` 的 `name` 必须是非空字符串（保留原名称中的空格）；`PATCH /api/api-keys/{id}` 的 `enabled` 必须是 JSON 布尔值 `true` 或 `false`。无效 JSON、错误的请求体结构或字段类型返回 HTTP 400，不创建密钥，也不改变已有密钥的启用状态。字符串 `"false"` 不等同于布尔值 `false`。
+
+同一用户重复创建同名密钥时返回 HTTP 409，错误代码为 `API_KEY_NAME_EXISTS`，不会替换或返回原密钥，即使原密钥已停用或到期也不例外；不同用户仍可使用相同名称。个人中心会保留创建对话框和已输入名称，显示当前语言的名称占用提示；更换名称后可按 Enter 重试。
+
+用户已接受明文密钥管理：公爵和皇帝登录后，可在个人中心的 API Key 管理列表查看和复制自己已有密钥的完整值，包括停用或到期的记录；没有跨用户密钥管理权限。管理接口仅接受有权限的登录会话，并返回 `Cache-Control: no-store`。
+
+关闭创建对话框会清除草稿、错误和创建成功状态，再次打开可立即输入；已有密钥仍可在列表复制。关闭界面不撤销已提交的请求，旧请求结果不能覆盖新的创建流程。刷新会合并返回的最新记录值，保留已经加载的旧页、游标和键盘焦点；其他标签页的启停变更会在相应记录被刷新时体现。操作期间仅当前行暂时禁用，失败后保留记录并显示相应错误。
+
+列表分页的非空 `cursor` 和邮件增量轮询的非空 `since` 应使用接口返回的游标，并通过 URL 参数编码传递。无效 JSON 结构、日期、ID 类型或收件序号返回 HTTP 400，不再作为服务器错误或静默重置轮询。有效旧版时间戳轮询游标仍兼容一次从头回放，由客户端去重。身份、所有权及分享有效期检查仍优先于游标校验。
+
 ### API 接口
 
 #### 获取系统配置
@@ -251,7 +272,7 @@ GET /api/config
 - `adminContact`: 管理员联系方式
 - `maxEmails`: 每个非皇帝用户可创建的最大活跃邮箱数量，默认值为 30；皇帝不受此限制
 
-已认证用户还会收到 `availableEmailDomains`，表示当前用户可创建邮箱的域名。皇帝请求该接口时，还会返回 `turnstile` 配置（`enabled`、`siteKey`、`secretKey`）和 `catchAll.domains`；后者按域名包含 `enabled`、`showAlways`、`mailboxName`。
+已认证用户还会收到 `availableEmailDomains`，表示当前用户可创建邮箱的域名。皇帝请求该接口时，还会返回 `turnstile` 配置（`enabled`、`siteKey`、`hasSecret`）和 `catchAll.domains`；后者按域名包含 `enabled`、`showAlways`、`mailboxName`。Turnstile 密钥只在服务端保存和使用，不会通过接口返回；保存时留空密钥会保留当前密钥。该接口响应带有 `Cache-Control: no-store`。
 
 #### 创建临时邮箱
 ```http
@@ -381,6 +402,19 @@ DELETE /api/emails/{emailId}
 响应字段说明：
 - `success`: 删除操作是否成功
 
+邮箱及其邮件、分享链接和收件序号由一次数据库删除级联清理，不再先单独清空邮件；删除语句被数据库拒绝时保留原记录。若请求因通信中断而失败，仍需重新查询确认删除结果。Catch-all 邮箱仍需在网站设置中管理。级联行为依赖仓库迁移中已有的外键约束，参见 [D1 外键说明](https://developers.cloudflare.com/d1/sql-api/foreign-keys/)。
+
+#### 批量删除邮箱账号
+
+```http
+DELETE /api/emails/bulk
+Content-Type: application/json
+```
+
+请求体：`{"ids":["mailbox-id-1","mailbox-id-2"]}`。`ids` 必须为 1–40 个不重复的非空 ID；无效输入返回 HTTP 400。需要登录会话或有邮箱管理权限的 API Key；未认证返回 401。任一邮箱不存在、不归当前用户所有、已过期或为 Catch-all 时，整批返回 403，不删除任何账号。
+
+成功响应：`{"success":true,"deletedIds":["mailbox-id-1","mailbox-id-2"]}`。邮箱、邮件、分享及收件序号在同一删除语句中级联清理；数据库失败保留整批数据。
+
 #### 获取单封邮件内容
 ```http
 GET /api/emails/{emailId}/{messageId}
@@ -430,7 +464,7 @@ Content-Type: application/json
 ```
 参数说明：
 - `emailId`: 邮箱的唯一标识符，必填
-- `expiresIn`: 分享链接有效期（毫秒），0 表示永久有效，可选
+- `expiresIn`: 可选的非负安全整数，单位为毫秒；省略或设为 0 表示分享链接本身不设到期时间，但仍受所属邮箱有效期限制。正数必须能生成有效的 JavaScript 日期。请求体必须是 JSON 对象；无效 JSON、错误类型、负数、小数及超出日期范围的值返回 HTTP 400，且不创建分享记录。
 
 返回响应：
 ```json
@@ -450,6 +484,8 @@ Content-Type: application/json
 - `createdAt`: 创建时间
 
 分享链接访问地址：`https://app.example.com/shared/{token}`
+
+公开邮箱接口 `GET /api/shared/{token}`、`GET /api/shared/{token}/messages` 和 `GET /api/shared/{token}/messages/{messageId}` 在分享或所属邮箱到期时（含恰好到期）返回 HTTP 410，不返回邮箱信息、邮件列表或正文。列表仅查询并返回摘要；正文通过消息详情接口按需读取。
 
 #### 获取邮箱的所有分享链接
 ```http
@@ -506,7 +542,7 @@ Content-Type: application/json
 参数说明：
 - `emailId`: 邮箱的唯一标识符，必填
 - `messageId`: 邮件的唯一标识符，必填
-- `expiresIn`: 分享链接有效期（毫秒），0 表示永久有效，可选
+- `expiresIn`: 可选的非负安全整数，单位为毫秒；省略或设为 0 表示分享链接本身不设到期时间，但仍受所属邮箱有效期限制。正数必须能生成有效的 JavaScript 日期。请求体必须是 JSON 对象；无效 JSON、错误类型、负数、小数及超出日期范围的值返回 HTTP 400，且不创建分享记录。
 
 返回响应：
 ```json

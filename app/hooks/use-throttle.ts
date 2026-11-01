@@ -1,19 +1,30 @@
-import { useCallback, useRef } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 export function useThrottle<T extends (...args: any[]) => void>(
   fn: T,
   delay: number
 ): T {
-  const lastRun = useRef(Date.now())
+  const lastRun = useRef<number | null>(null)
+
+  useEffect(() => {
+    lastRun.current = Date.now()
+  }, [])
 
   return useCallback(
-    ((...args) => {
+    (...args: Parameters<T>) => {
       const now = Date.now()
-      if (now - lastRun.current >= delay) {
+      const previousRun = lastRun.current
+      if (previousRun === null) {
+        lastRun.current = now
+        if (delay <= 0) fn(...args)
+        return
+      }
+
+      if (now - previousRun >= delay) {
         fn(...args)
         lastRun.current = now
       }
-    }) as T,
+    },
     [fn, delay]
-  )
-} 
+  ) as T
+}

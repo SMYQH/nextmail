@@ -1,8 +1,8 @@
 ---
 name: caveman
 description: >
-  Terse voice: answer first, cut filler, retain every technical fact.
-  Use until the user requests normal mode.
+  Terse caveman voice: answer first, fluff gone, every technical fact kept.
+  Use before any response. Stays on until "stop caveman" or "normal mode".
 ---
 
 # caveman

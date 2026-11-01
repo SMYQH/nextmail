@@ -218,10 +218,150 @@ export const getKVNamespace = (namespaceId: string) =>
 export const getDatabaseById = (databaseId: string) =>
   client.d1.database.get(databaseId, { account_id: CF_ACCOUNT_ID });
 
-export const getEmailCatchAll = (zoneId: string) =>
-  client.emailRouting.rules.catchAlls.get({ zone_id: zoneId });
+/**
+ * The Catch-all rule of the zone, or null when the zone has none yet.
+ *
+ * A zone without a Catch-all rule is a normal state before the first
+ * deployment, so the not-found answer must not abort the caller.
+ */
+export const getEmailCatchAll = async (zoneId: string) => {
+  try {
+    return await client.emailRouting.rules.catchAlls.get({ zone_id: zoneId });
+  } catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw error;
+  }
+};
 
-export const disableEmailCatchAll = (zoneId: string, rule: Awaited<ReturnType<typeof getEmailCatchAll>>) => {
+/**
+ * The Catch-all rule that was in place before this project took over the zone.
+ * It is stored in the project KV namespace so it survives a CI deployment and
+ * can be restored when the project resources are removed.
+ */
+export const PREVIOUS_CATCH_ALL_KEY = "PREVIOUS_CATCH_ALL_RULE";
+
+export type StoredCatchAllRule = {
+  actions: Array<{ type: string; value?: string[] }>;
+  matchers: Array<{ type: string }>;
+  enabled?: boolean;
+  name?: string;
+};
+
+type StoredCatchAllBackup = {
+  zoneId: string;
+  rule: StoredCatchAllRule | null;
+};
+
+const targetsProjectEmailWorker = (rule: StoredCatchAllRule) =>
+  rule.actions.some(action => action.type === "worker" && action.value?.includes(EMAIL_WORKER_NAME));
+
+const previousCatchAllKey = (zoneId: string) => `${PREVIOUS_CATCH_ALL_KEY}:${zoneId}`;
+
+export const getKVValue = async (namespaceId: string, key: string) => {
+  const response = await client.kv.namespaces.values.get(namespaceId, key, {
+    account_id: CF_ACCOUNT_ID,
+  });
+  return response.text();
+};
+
+export const putKVValue = (namespaceId: string, key: string, value: string) =>
+  client.kv.namespaces.values.update(namespaceId, key, {
+    account_id: CF_ACCOUNT_ID,
+    value,
+  });
+
+export const getOptionalKVValue = async (namespaceId: string, key: string) => {
+  try { return await getKVValue(namespaceId, key); }
+  catch (error) {
+    if (error instanceof NotFoundError) return null;
+    throw new Error(`Could not read deployment setting ${key}${apiErrorStatus(error)}`);
+  }
+};
+
+export const queryDeploymentDatabase = async (databaseId: string, sql: string, params: string[] = []) => {
+  try {
+    const results = await client.d1.database.query(databaseId, { account_id: CF_ACCOUNT_ID, sql, params });
+    const rows: Record<string, unknown>[] = [];
+    for await (const result of results) {
+      if (result.success === false) throw new Error("D1 query failed");
+      rows.push(...(result.results || []) as Record<string, unknown>[]);
+    }
+    return rows;
+  } catch (error) {
+    // D1 errors can contain bound account passwords or API keys. Keep them out of logs.
+    throw new Error(`Could not apply deployment account configuration${apiErrorStatus(error)}`);
+  }
+};
+
+/**
+ * Records the Catch-all rule that this project is about to replace, so the
+ * cleanup can restore it instead of leaving the zone disabled.
+ *
+ * An already recorded rule is kept: a later deployment must not replace the
+ * original zone rule with this project's own rule.
+ */
+export const recordPreviousCatchAll = async (
+  namespaceId: string,
+  zoneId: string,
+  rule: Awaited<ReturnType<typeof getEmailCatchAll>>,
+) => {
+  if (await readPreviousCatchAll(namespaceId, zoneId)) return false;
+  const previous: StoredCatchAllRule | null = rule ? {
+    actions: rule.actions ?? [],
+    matchers: rule.matchers ?? [{ type: "all" }],
+    ...(typeof rule.enabled === "boolean" ? { enabled: rule.enabled } : {}),
+    ...(rule.name ? { name: rule.name } : {}),
+  } : null;
+  // Upgrades may already have our Worker route without a predecessor backup.
+  // Persist the absent/unknown predecessor so redeployments keep disabling it.
+  const stored: StoredCatchAllBackup = {
+    zoneId,
+    rule: previous && !targetsProjectEmailWorker(previous) ? previous : null,
+  };
+  await putKVValue(namespaceId, previousCatchAllKey(zoneId), JSON.stringify(stored));
+  return true;
+};
+
+export const readPreviousCatchAll = async (namespaceId: string, zoneId: string) => {
+  let raw: string;
+  try {
+    // Legacy unscoped backups cannot safely identify their source zone.
+    raw = await getKVValue(namespaceId, previousCatchAllKey(zoneId));
+  } catch (error) {
+    if (error instanceof NotFoundError) return undefined;
+    throw error;
+  }
+  if (!raw?.trim()) return undefined;
+  try {
+    const parsed = JSON.parse(raw) as StoredCatchAllBackup;
+    if (!parsed || parsed.zoneId !== zoneId) return undefined;
+    if (parsed.rule !== null && (!parsed.rule || !Array.isArray(parsed.rule.actions) ||
+      !Array.isArray(parsed.rule.matchers) || targetsProjectEmailWorker(parsed.rule))) return undefined;
+    return parsed;
+  } catch {
+    return undefined;
+  }
+};
+
+/** Restores a previously recorded Catch-all rule to the zone. */
+export const restoreEmailCatchAll = (zoneId: string, backup: StoredCatchAllBackup) => {
+  if (backup.zoneId !== zoneId || !backup.rule || targetsProjectEmailWorker(backup.rule)) {
+    throw new Error("Catch-all backup does not identify a restorable predecessor for this zone");
+  }
+  const rule = backup.rule;
+  return client.emailRouting.rules.catchAlls.update({
+    zone_id: zoneId,
+    actions: rule.actions as Array<{ type: "worker" | "forward" | "drop" }>,
+    matchers: rule.matchers as Array<{ type: "all" }>,
+    enabled: rule.enabled ?? true,
+    ...(rule.name ? { name: rule.name } : {}),
+  });
+};
+
+export const disableEmailCatchAll = (
+  zoneId: string,
+  rule: NonNullable<Awaited<ReturnType<typeof getEmailCatchAll>>>,
+) => {
   const ownerWorkerTag = "owner_worker_tag" in rule && typeof rule.owner_worker_tag === "string"
     ? rule.owner_worker_tag
     : undefined;

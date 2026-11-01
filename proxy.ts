@@ -12,7 +12,7 @@ const API_PERMISSIONS: Record<string, Permission> = {
   '/api/api-keys': PERMISSIONS.MANAGE_API_KEY,
 }
 
-export async function middleware(request: Request) {
+export async function proxy(request: Request) {
   const url = new URL(request.url)
   const pathname = url.pathname
   const forwardedHeaders = new Headers(request.headers)

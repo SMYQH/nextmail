@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useRef } from "react"
+import { useTheme } from "next-themes"
 import { cn } from "@/lib/utils"
 
 interface TurnstileProps {
@@ -9,6 +10,11 @@ interface TurnstileProps {
   onExpire?: () => void
   resetSignal?: number
   className?: string
+}
+
+/** The widget only understands light and dark, so the app theme is mapped onto it. */
+export function turnstileTheme(resolvedTheme: string | undefined): "light" | "dark" {
+  return resolvedTheme === "dark" ? "dark" : "light"
 }
 
 export function Turnstile({
@@ -20,6 +26,8 @@ export function Turnstile({
 }: TurnstileProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const widgetIdRef = useRef<string>(null)
+  const { resolvedTheme } = useTheme()
+  const theme = turnstileTheme(resolvedTheme)
 
   useEffect(() => {
     if (!siteKey) return
@@ -27,14 +35,16 @@ export function Turnstile({
     const renderWidget = () => {
       if (!containerRef.current || !window.turnstile) return
 
+      // The widget cannot change its theme in place, so it is rendered again
+      // whenever the application theme changes.
       if (widgetIdRef.current) {
-        window.turnstile.reset(widgetIdRef.current)
-        return
+        window.turnstile.remove(widgetIdRef.current)
+        widgetIdRef.current = null
       }
 
       widgetIdRef.current = window.turnstile.render(containerRef.current, {
         sitekey: siteKey,
-        theme: "auto",
+        theme,
         callback: (token: string) => onVerify(token),
         "error-callback": () => onVerify(""),
         "expired-callback": () => {
@@ -59,6 +69,10 @@ export function Turnstile({
 
       return () => {
         existingScript.removeEventListener("load", handleExistingScriptLoad)
+        if (widgetIdRef.current && window.turnstile) {
+          window.turnstile.remove(widgetIdRef.current)
+          widgetIdRef.current = null
+        }
       }
     } else {
       const script = document.createElement("script")
@@ -75,6 +89,10 @@ export function Turnstile({
 
       return () => {
         script.removeEventListener("load", handleScriptLoad)
+        if (widgetIdRef.current && window.turnstile) {
+          window.turnstile.remove(widgetIdRef.current)
+          widgetIdRef.current = null
+        }
       }
     }
 
@@ -84,7 +102,7 @@ export function Turnstile({
         widgetIdRef.current = null
       }
     }
-  }, [siteKey, onExpire, onVerify])
+  }, [siteKey, onExpire, onVerify, theme])
 
   useEffect(() => {
     if (resetSignal === undefined) return

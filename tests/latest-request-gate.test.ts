@@ -71,3 +71,16 @@ test("shared message responses are ignored after selecting another message or cl
 
   assert.deepEqual(committed, ["message-b"])
 })
+
+test("closing and reopening the same creation scope never revives an obsolete ticket", () => {
+  const gate = new LatestRequestGate()
+  const first = gate.begin("api-key:create")
+  gate.invalidate()
+  const reopened = gate.begin("api-key:create")
+
+  assert.equal(first.isCurrent(), false)
+  assert.equal(reopened.isCurrent(), true)
+  gate.invalidate()
+  assert.equal(first.isCurrent(), false)
+  assert.equal(reopened.isCurrent(), false)
+})

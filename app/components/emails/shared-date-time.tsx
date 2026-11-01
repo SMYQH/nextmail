@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useEffect, useState } from "react"
+import React, { useSyncExternalStore } from "react"
 import {
   formatSharedDate,
   type SharedDateFormat,
@@ -14,6 +14,10 @@ interface SharedDateTimeProps {
   initialText?: string
 }
 
+function subscribeToNoChanges() {
+  return () => {}
+}
+
 export function SharedDateTime({
   value,
   locale,
@@ -21,15 +25,14 @@ export function SharedDateTime({
   initialText,
 }: SharedDateTimeProps) {
   const timestamp = new Date(value instanceof Date ? value.getTime() : value).getTime()
-  const [text, setText] = useState(() =>
-    initialText ?? formatSharedDate(timestamp, locale, format, "UTC")
+  const serverText = initialText ?? formatSharedDate(timestamp, locale, format, "UTC")
+  const text = useSyncExternalStore(
+    subscribeToNoChanges,
+    () => formatSharedDate(timestamp, locale, format),
+    () => serverText,
   )
 
-  useEffect(() => {
-    setText(formatSharedDate(timestamp, locale, format))
-  }, [timestamp, locale, format])
-
-  if (!Number.isFinite(timestamp)) return null
+  if (!Number.isFinite(timestamp) || timestamp === 0) return null
 
   return (
     <time dateTime={new Date(timestamp).toISOString()}>

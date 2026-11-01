@@ -1,6 +1,87 @@
-import { existsSync, readFileSync, statSync } from "node:fs"
-import { resolve } from "node:path"
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { basename, extname, relative, resolve } from "node:path"
 import { pathToFileURL } from "node:url"
+import { parse } from "dotenv"
+
+const SENSITIVE_ENV_NAME = /(SECRET|TOKEN|PASSWORD|PRIVATE.?KEY|API.?KEY)/i
+const SENSITIVE_JSON_FIELD = /^(?:secret|token|password|private.?key|api.?key)$/i
+const SENSITIVE_JSON_SETTING_NAMES = new Set(["ADMIN_USERS", "RESEND_CONFIG"])
+const TEXT_ARTIFACT_EXTENSIONS = new Set([".cjs", ".css", ".html", ".js", ".json", ".map", ".mjs", ".svg", ".txt", ".xml"])
+
+type CredentialValue = { name: string; value: string }
+
+function collectNestedCredentials(value: unknown, name: string, path: string[] = []): CredentialValue[] {
+  if (Array.isArray(value)) {
+    return value.flatMap((entry, index) => collectNestedCredentials(entry, name, [...path, String(index)]))
+  }
+  if (!value || typeof value !== "object") return []
+
+  return Object.entries(value).flatMap(([key, nested]) => {
+    const nestedPath = [...path, key]
+    const apiKeyValue = key === "key" && path.some(part => /^apiKeys$/i.test(part))
+    if (typeof nested === "string" && (SENSITIVE_JSON_FIELD.test(key) || apiKeyValue)) {
+      return [{ name: `${name}.${nestedPath.join(".")}`, value: nested }]
+    }
+    return collectNestedCredentials(nested, name, nestedPath)
+  })
+}
+
+function getCredentialValues(root: string): CredentialValue[] {
+  const envSources: Record<string, string | undefined>[] = [{ ...process.env }]
+  const deployEnvPath = resolve(root, ".env.deploy")
+  if (existsSync(deployEnvPath)) envSources.push(parse(readFileSync(deployEnvPath)))
+
+  const credentials: CredentialValue[] = []
+  for (const envValues of envSources) {
+    for (const [name, value] of Object.entries(envValues)) {
+      if (!value || name.startsWith("NEXT_PUBLIC_")) continue
+      if (SENSITIVE_ENV_NAME.test(name)) credentials.push({ name, value })
+      if (SENSITIVE_JSON_SETTING_NAMES.has(name)) {
+        try {
+          credentials.push(...collectNestedCredentials(JSON.parse(value), name))
+        } catch {
+          // Deployment config validation reports malformed JSON before any build.
+        }
+      }
+    }
+  }
+  const unique = new Map(credentials.map(credential => [`${credential.name}\u0000${credential.value}`, credential]))
+  return [...unique.values()]
+}
+
+function walkArtifactFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap(entry => {
+    const path = resolve(directory, entry.name)
+    if (entry.isDirectory()) return walkArtifactFiles(path)
+    return entry.isFile() ? [path] : []
+  })
+}
+
+function assertNoBundledEnvFiles(root: string, outputRoot: string) {
+  for (const path of walkArtifactFiles(outputRoot)) {
+    const filename = basename(path).toLowerCase()
+    if (filename === ".env" || filename.startsWith(".env.") || filename === ".dev.vars" || filename.startsWith(".dev.vars.")) {
+      throw new Error(`Worker artifact contains an environment file: ${relative(root, path).replace(/\\/g, "/")}`)
+    }
+  }
+}
+
+function assertNoBundledCredentials(root: string, outputRoot: string) {
+  const files = walkArtifactFiles(outputRoot)
+  const credentials = getCredentialValues(root)
+    // Real credentials are longer; skipping short values avoids matching common
+    // strings such as `secret` in framework code or bundled source maps.
+    .filter(({ value }) => value.length >= 8)
+  for (const path of files) {
+    if (!TEXT_ARTIFACT_EXTENSIONS.has(extname(path).toLowerCase())) continue
+    const artifact = readFileSync(path)
+    for (const { name, value } of credentials) {
+      if (artifact.includes(Buffer.from(value, "utf8"))) {
+        throw new Error(`Worker artifact contains configured credential ${name}: ${relative(root, path).replace(/\\/g, "/")}`)
+      }
+    }
+  }
+}
 
 export function assertOpenNextBuild(root = process.cwd()) {
   const workerPath = resolve(root, ".open-next/worker.js")
@@ -13,6 +94,9 @@ export function assertOpenNextBuild(root = process.cwd()) {
   if (!existsSync(assetsPath) || !statSync(assetsPath).isDirectory()) {
     throw new Error("OpenNext static assets were not generated at .open-next/assets")
   }
+
+  assertNoBundledEnvFiles(root, resolve(root, ".open-next"))
+  assertNoBundledCredentials(root, resolve(root, ".open-next"))
 
   const config = JSON.parse(readFileSync(wranglerPath, "utf8")) as {
     main?: string

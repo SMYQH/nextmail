@@ -1,10 +1,12 @@
 "use client"
 
 import { Mail, Calendar, RefreshCw } from "lucide-react"
+import { useTranslations } from "next-intl"
 import { cn } from "@/lib/utils"
 import { useThrottle } from "@/hooks/use-throttle"
 import { Button } from "@/components/ui/button"
 import { SharedDateTime } from "./shared-date-time"
+import { EmptyState } from "@/components/ui/empty-state"
 
 interface Message {
   id: string
@@ -52,6 +54,7 @@ export function SharedMessageList({
   total = 0,
   t,
 }: SharedMessageListProps) {
+  const tCommon = useTranslations("common.actions")
   const handleScroll = useThrottle((e: React.UIEvent<HTMLDivElement>) => {
     if (loadingMore || !hasMore || !onLoadMore) return
 
@@ -73,9 +76,10 @@ export function SharedMessageList({
           onClick={onRefresh}
           disabled={refreshing || loading}
           className="h-8 w-8"
-              aria-busy={refreshing}
+          aria-label={tCommon("refresh")}
+          aria-busy={refreshing}
         >
-          <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
+          <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} aria-hidden="true" />
         </Button>
         <span className="text-xs text-muted-foreground">
           {total > 0 ? `${total} ${t.messageCount}` : t.noMessages}
@@ -104,11 +108,11 @@ export function SharedMessageList({
                 <span className="flex items-start gap-3">
                   <Mail className="w-4 h-4 text-primary/60 mt-1" />
                   <span className="min-w-0 flex-1">
-                    <span className="block font-medium text-sm truncate">
+                    <span className="block font-medium text-sm truncate" title={message.subject}>
                       {message.subject}
                     </span>
                     <span className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="truncate">
+                      <span className="truncate" title={message.from_address || message.to_address || ""}>
                         {message.from_address || message.to_address || ""}
                       </span>
                       <span className="flex items-center gap-1">
@@ -131,9 +135,7 @@ export function SharedMessageList({
             )}
           </div>
         ) : (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            {t.noMessages}
-          </div>
+          <EmptyState message={t.noMessages} />
         )}
       </div>
     </div>

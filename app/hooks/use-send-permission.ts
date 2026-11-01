@@ -10,32 +10,32 @@ interface SendPermissionResponse {
 interface PermissionState extends Omit<SendPermissionResponse, 'error'> {
   address?: string
   addressVersion: number
+  status: 'loading' | 'resolved'
   error?: string | null
 }
 
 export function useSendPermission(address?: string) {
-  const [loading, setLoading] = useState(false)
-  const [permission, setPermission] = useState<PermissionState>({ canSend: false, addressVersion: 0 })
+  const [permission, setPermission] = useState<PermissionState>({
+    canSend: false,
+    addressVersion: -1,
+    status: 'resolved',
+  })
   const latestRequest = useRef(0)
-  const latestAddress = useRef(address)
-  const addressVersion = useRef(0)
-  if (latestAddress.current !== address) {
-    latestAddress.current = address
-    addressVersion.current += 1
+  const [addressState, setAddressState] = useState(() => ({ address, version: 0 }))
+
+  // Keep a generation for each prop transition, including A -> B -> A, so an
+  // old response for A cannot become current again after switching back.
+  if (addressState.address !== address) {
+    setAddressState({ address, version: addressState.version + 1 })
   }
 
-  const checkPermission = useCallback(async () => {
-    const requestId = ++latestRequest.current
-    const requestAddressVersion = addressVersion.current
-    setLoading(true)
-    const isCurrentRequest = () => (
-      requestId === latestRequest.current
-      && requestAddressVersion === addressVersion.current
-      && latestAddress.current === address
-    )
-
+  const runPermissionCheck = useCallback(async (
+    requestAddress: string | undefined,
+    requestAddressVersion: number,
+    isCurrentRequest: () => boolean
+  ) => {
     try {
-      const query = address ? `?address=${encodeURIComponent(address)}` : ''
+      const query = requestAddress ? `?address=${encodeURIComponent(requestAddress)}` : ''
       const response = await fetch(`/api/emails/send-permission${query}`)
 
       if (!response.ok) {
@@ -45,8 +45,9 @@ export function useSendPermission(address?: string) {
       const data = await response.json() as SendPermissionResponse
       if (!isCurrentRequest()) return
       setPermission({
-        address,
+        address: requestAddress,
         addressVersion: requestAddressVersion,
+        status: 'resolved',
         canSend: data.canSend,
         error: data.canSend ? null : data.error ?? null,
         remainingEmails: data.remainingEmails,
@@ -55,25 +56,51 @@ export function useSendPermission(address?: string) {
     } catch (err) {
       if (!isCurrentRequest()) return
       setPermission({
-        address,
+        address: requestAddress,
         addressVersion: requestAddressVersion,
+        status: 'resolved',
         canSend: false,
         error: err instanceof Error ? err.message : '权限检查失败',
         enabledDomains: [],
       })
-    } finally {
-      if (isCurrentRequest()) setLoading(false)
     }
-  }, [address])
+  }, [])
+
+  const checkPermission = useCallback(async () => {
+    const requestId = ++latestRequest.current
+    const requestAddressVersion = addressState.version
+    setPermission({
+      address,
+      addressVersion: requestAddressVersion,
+      status: 'loading',
+      canSend: false,
+    })
+    await runPermissionCheck(
+      address,
+      requestAddressVersion,
+      () => requestId === latestRequest.current
+    )
+  }, [address, addressState.version, runPermissionCheck])
 
   useEffect(() => {
-    checkPermission()
-  }, [checkPermission])
+    const requestId = ++latestRequest.current
+    let active = true
+    void runPermissionCheck(
+      address,
+      addressState.version,
+      () => active && requestId === latestRequest.current
+    )
+
+    return () => {
+      active = false
+    }
+  }, [address, addressState.version, runPermissionCheck])
 
   const currentPermission = permission.address === address
-    && permission.addressVersion === addressVersion.current
+    && permission.addressVersion === addressState.version
     ? permission
     : undefined
+  const loading = !currentPermission || currentPermission.status === 'loading'
 
   return {
     canSend: currentPermission?.canSend ?? false,

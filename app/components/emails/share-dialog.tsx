@@ -1,7 +1,9 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useTranslations } from "next-intl"
+import { useState, useEffect, useRef } from "react"
+import { LatestRequestGate } from "@/lib/latest-request-gate"
+import { useLocale, useTranslations } from "next-intl"
+import { SharedDateTime } from "./shared-date-time"
 import { Share2, Copy, Trash2, Link2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import {
@@ -48,36 +50,64 @@ interface ShareLink {
   enabled: boolean
 }
 
-export function ShareDialog({ emailId }: ShareDialogProps) {
+function getExpiryTimestamp(value: ShareLink["expiresAt"]) {
+  if (!value) return null
+  const timestamp = value instanceof Date
+    ? value.getTime()
+    : typeof value === "number"
+      ? value
+      : Date.parse(value)
+  return Number.isFinite(timestamp) ? timestamp : null
+}
+
+export function ShareDialog(props: ShareDialogProps) {
+  return <ShareDialogContent key={props.emailId} {...props} />
+}
+
+function ShareDialogContent({ emailId }: ShareDialogProps) {
+  const locale = useLocale()
   const t = useTranslations("emails.share")
   const tCommon = useTranslations("common.actions")
   const { toast } = useToast()
   const { copyToClipboard } = useCopy()
 
   const [open, setOpen] = useState(false)
+  const tPagination = useTranslations("common.pagination")
   const [shares, setShares] = useState<ShareLink[]>([])
+  const [nextCursor, setNextCursor] = useState<string | null>(null)
+  const [loadingMore, setLoadingMore] = useState(false)
+  const listGateRef = useRef(new LatestRequestGate())
+  const [currentTime, setCurrentTime] = useState<number | null>(null)
   const [loading, setLoading] = useState(false)
   const [creating, setCreating] = useState(false)
   const [expiryTime, setExpiryTime] = useState(EXPIRY_OPTIONS[1].value.toString())
   const [deleteTarget, setDeleteTarget] = useState<ShareLink | null>(null)
 
-  const fetchShares = async () => {
+  const fetchShares = async (cursor?: string) => {
+    const ticket = listGateRef.current.begin(emailId)
+    if (cursor) setLoadingMore(true)
+    else setLoading(true)
     try {
-      setLoading(true)
-      const response = await fetch(`/api/emails/${emailId}/share`)
+      const query = cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""
+      const response = await fetch(`/api/emails/${emailId}/share${query}`)
       if (!response.ok) throw new Error("Failed to fetch shares")
-
-      const data = await response.json() as { shares: ShareLink[] }
-      setShares(data.shares || [])
+      const data = await response.json() as { shares: ShareLink[]; nextCursor?: string | null }
+      if (!ticket.isCurrent()) return
+      setShares(previous => cursor ? [...new Map([...previous, ...data.shares].map(share => [share.id, share])).values()] : data.shares || [])
+      setNextCursor(data.nextCursor ?? null)
+      setCurrentTime(Date.now())
     } catch (error) {
+      if (!ticket.isCurrent()) return
       console.error("Failed to fetch shares:", error)
       toast({
-        title: t("createFailed"),
-        description: String(error),
+        title: cursor ? tPagination("loadFailed") : t("loadFailed"),
         variant: "destructive"
       })
     } finally {
-      setLoading(false)
+      if (ticket.isCurrent()) {
+        setLoading(false)
+        setLoadingMore(false)
+      }
     }
   }
 
@@ -94,6 +124,7 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
 
       const share = await response.json() as ShareLink
       setShares(prev => [share, ...prev])
+      setCurrentTime(Date.now())
 
       toast({
         title: t("createSuccess"),
@@ -102,7 +133,6 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
       console.error("Failed to create share:", error)
       toast({
         title: t("createFailed"),
-        description: String(error),
         variant: "destructive"
       })
     } finally {
@@ -119,6 +149,7 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
       if (!response.ok) throw new Error("Failed to delete share")
 
       setShares(prev => prev.filter(s => s.id !== share.id))
+      setCurrentTime(Date.now())
 
       toast({
         title: t("deleteSuccess"),
@@ -127,7 +158,6 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
       console.error("Failed to delete share:", error)
       toast({
         title: t("deleteFailed"),
-        description: String(error),
         variant: "destructive"
       })
     } finally {
@@ -156,15 +186,30 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
   }
 
   useEffect(() => {
-    if (open) {
-      fetchShares()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open])
+    const gate = listGateRef.current
+    return () => gate.invalidate()
+  }, [])
+
+  useEffect(() => {
+    if (!open || currentTime === null) return
+    const nextExpiry = shares
+      .map(share => getExpiryTimestamp(share.expiresAt))
+      .filter((timestamp): timestamp is number => timestamp !== null && timestamp > currentTime)
+      .reduce((soonest, timestamp) => Math.min(soonest, timestamp), Infinity)
+    if (!Number.isFinite(nextExpiry)) return
+
+    const delay = Math.min(nextExpiry - Date.now(), 2_147_483_647)
+    const timer = window.setTimeout(() => setCurrentTime(Date.now()), delay)
+    return () => window.clearTimeout(timer)
+  }, [currentTime, open, shares])
 
   return (
     <>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog open={open} onOpenChange={value => {
+        setOpen(value)
+        if (value) void fetchShares()
+        else listGateRef.current.invalidate()
+      }}>
         <DialogTrigger asChild>
           <Button aria-label={tCommon("share")} variant="ghost" size="icon" className="h-8 w-8">
             <Share2 className="h-4 w-4" />
@@ -198,7 +243,7 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
                   <SelectContent>
                     {EXPIRY_OPTIONS.map(option => (
                       <SelectItem key={option.value} value={option.value.toString()}>
-                        {option.label}
+                        {t(option.labelKey)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -226,12 +271,8 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
                   <div className="space-y-2">
                     {shares.map(share => {
                       // 将expiresAt转换为时间戳进行比较
-                      const expiresAtTime = share.expiresAt
-                        ? (typeof share.expiresAt === 'number'
-                          ? share.expiresAt
-                          : new Date(share.expiresAt).getTime())
-                        : null
-                      const isExpired = expiresAtTime !== null && expiresAtTime < Date.now()
+                      const expiresAtTime = getExpiryTimestamp(share.expiresAt)
+                      const isExpired = expiresAtTime !== null && currentTime !== null && expiresAtTime < currentTime
                       return (
                         <div
                           key={share.id}
@@ -269,39 +310,33 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 shrink-0"
+                              aria-label={t("copy")}
                               onClick={() => handleCopy(share.token)}
                             >
-                              <Copy className="h-4 w-4" />
+                              <Copy className="h-4 w-4" aria-hidden="true" />
                             </Button>
                             <Button
                               variant="ghost"
                               size="icon"
                               className="h-8 w-8 shrink-0"
+                              aria-label={t("delete")}
                               onClick={() => setDeleteTarget(share)}
                             >
-                              <Trash2 className="h-4 w-4 text-destructive" />
+                              <Trash2 className="h-4 w-4 text-destructive" aria-hidden="true" />
                             </Button>
                           </div>
                           <div className="flex gap-y-4 gap-x-2 sm:gap-x-4 text-xs">
                             <span className={cn(
                               isExpired ? "text-destructive/70" : "text-muted-foreground"
                             )}>
-                              {t("createdAt")}: {new Date(
-                                typeof share.createdAt === 'number'
-                                  ? share.createdAt
-                                  : share.createdAt
-                              ).toLocaleString()}
+                              {t("createdAt")}: <SharedDateTime value={share.createdAt} locale={locale} />
                             </span>
                             <span className={cn(
                               isExpired ? "text-destructive/70" : "text-muted-foreground"
                             )}>
                               {t("expiresAt")}: {
                                 share.expiresAt
-                                  ? new Date(
-                                    typeof share.expiresAt === 'number'
-                                      ? share.expiresAt
-                                      : share.expiresAt
-                                  ).toLocaleString()
+                                  ? <SharedDateTime value={share.expiresAt} locale={locale} />
                                   : t("permanent")
                               }
                             </span>
@@ -318,6 +353,18 @@ export function ShareDialog({ emailId }: ShareDialogProps) {
                   </div>
                 )}
               </div>
+              {nextCursor && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  disabled={loading || loadingMore || creating}
+                  aria-busy={loadingMore}
+                  onClick={() => void fetchShares(nextCursor)}
+                >
+                  {tPagination("loadMore")}
+                </Button>
+              )}
             </div>
           </div>
         </DialogContent>

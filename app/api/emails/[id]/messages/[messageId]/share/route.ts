@@ -3,10 +3,12 @@ import { checkBasicSendPermission } from "@/lib/send-permissions"
 import { PERMISSIONS } from "@/lib/permissions"
 import { createDb } from "@/lib/db"
 import { messageShares, messages, emails } from "@/lib/schema"
-import { eq, and } from "drizzle-orm"
+import { eq, and, desc, sql } from "drizzle-orm"
+import { OWNER_LIST_PAGE_SIZE, ownerListBefore, ownerListPage, readOwnerListCursor } from "@/lib/owner-list-pagination"
 import { NextResponse } from "next/server"
 import { getUserId } from "@/lib/apiKey"
 import { nanoid } from "nanoid"
+import { parseShareExpiry } from "@/lib/share-expiry"
 
 
 // 获取消息的所有分享链接
@@ -40,13 +42,18 @@ export async function GET(
     if (!message) {
       return NextResponse.json({ error: "Message not found" }, { status: 404 })
     }
-    // 获取该消息的所有分享链接
-    const shares = await db.query.messageShares.findMany({
-      where: eq(messageShares.messageId, messageId),
-      orderBy: (messageShares, { desc }) => [desc(messageShares.createdAt)]
+    const cursor = readOwnerListCursor(request)
+    if (cursor === undefined) return NextResponse.json({ error: "Invalid cursor" }, { status: 400 })
+    const createdAt = sql<number>`coalesce(${messageShares.createdAt}, 0)`
+    const rows = await db.query.messageShares.findMany({
+      where: and(eq(messageShares.messageId, messageId), ownerListBefore(createdAt, messageShares.id, cursor)),
+      orderBy: [desc(createdAt), desc(messageShares.id)],
+      limit: OWNER_LIST_PAGE_SIZE + 1,
     })
+    const { items: shares, nextCursor } = ownerListPage(rows)
+    const [count] = await db.select({ total: sql<number>`count(*)` }).from(messageShares).where(eq(messageShares.messageId, messageId))
 
-    return NextResponse.json({ shares, total: shares.length })
+    return NextResponse.json({ shares, total: Number(count.total), nextCursor })
   } catch (error) {
     console.error("Failed to fetch message shares:", safeErrorMetadata(error))
     return NextResponse.json(
@@ -91,18 +98,13 @@ export async function POST(
       return NextResponse.json({ error: "Forbidden" }, { status: 403 })
     }
 
-    // 解析请求体
-    const body = await request.json() as { expiresIn: number }
-    const { expiresIn } = body // expiresIn 单位为毫秒，0表示永久
+    const expiresAt = parseShareExpiry(await request.json().catch(() => null))
+    if (expiresAt === undefined) {
+      return NextResponse.json({ error: "Invalid share expiry" }, { status: 400 })
+    }
 
     // 生成简短的分享token (16个字符)
     const token = nanoid(16)
-
-    // 计算过期时间
-    let expiresAt = null
-    if (expiresIn && expiresIn > 0) {
-      expiresAt = new Date(Date.now() + expiresIn)
-    }
 
     // 创建分享记录
     const [share] = await db.insert(messageShares).values({

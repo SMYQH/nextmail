@@ -23,11 +23,11 @@ test("local sync is disabled without both settings and in GitHub Actions", async
   await assert.doesNotReject(syncLocalGitHubSecrets({ GITHUB_ACTIONS: "true", REPOSITORY_URL: "https://github.com/example/nextmail", GITHUB_TOKEN: "local-only" }))
 })
 
-test("sync encrypts .env settings and excludes the GitHub bootstrap credentials", async t => {
+test("sync encrypts .env.deploy settings and excludes the GitHub bootstrap credentials", async t => {
   await sodium.ready
   const directory = mkdtempSync(join(tmpdir(), "nextmail-github-secrets-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
-  const envFilePath = join(directory, ".env")
+  const envFilePath = join(directory, ".env.deploy")
   writeFileSync(envFilePath, 'AUTH_SECRET="synthetic-test-secret"\nEMAIL_DOMAIN="example.com"\nWEBHOOK_ALLOWED_HOSTS=""\nREPOSITORY_URL="https://github.com/example/nextmail"\nGITHUB_TOKEN="synthetic-bootstrap-token"\n')
   const keypair = sodium.crypto_box_keypair()
   const uploaded = new Map<string, string>()
@@ -63,7 +63,7 @@ test("sync encrypts .env settings and excludes the GitHub bootstrap credentials"
 test("invalid names and API failures stop sync without printing secret values", async t => {
   const directory = mkdtempSync(join(tmpdir(), "nextmail-github-secrets-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
-  const envFilePath = join(directory, ".env")
+  const envFilePath = join(directory, ".env.deploy")
   writeFileSync(envFilePath, 'GITHUB_UNEXPECTED="synthetic-secret"\n')
   assert.throws(() => readSecretsFromEnv(envFilePath), /Invalid GitHub Actions secret name/)
   writeFileSync(envFilePath, 'AUTH_SECRET="synthetic-secret"\n')

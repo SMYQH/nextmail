@@ -4,7 +4,7 @@ import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Settings } from "lucide-react"
 import { useToast } from "@/components/ui/use-toast"
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { ROLES } from "@/lib/permissions"
 import type { Role } from "@/lib/permissions"
 import { Input } from "@/components/ui/input"
@@ -22,6 +22,7 @@ import { EMAIL_CONFIG } from "@/config"
 import { normalizeMailboxName } from "@/lib/catch-all"
 import { normalizeEmailDomains } from "@/lib/email-domains"
 import { useConfigStore } from "@/hooks/use-config"
+import { parsePositiveSafeInteger } from "@/lib/max-emails"
 
 interface CatchAllDomainSettings {
   enabled: boolean
@@ -44,46 +45,66 @@ export function WebsiteConfigPanel() {
   const [maxEmails, setMaxEmails] = useState<string>(EMAIL_CONFIG.MAX_ACTIVE_EMAILS.toString())
   const [turnstileEnabled, setTurnstileEnabled] = useState(false)
   const [turnstileSiteKey, setTurnstileSiteKey] = useState("")
-  const [turnstileSecretKey, setTurnstileSecretKey] = useState("")
+  // The stored secret stays on the server: the browser only learns whether one
+  // is configured and keeps any replacement the operator types.
+  const [turnstileHasSecret, setTurnstileHasSecret] = useState(false)
+  const [turnstileSecretInput, setTurnstileSecretInput] = useState("")
   const [catchAllDomains, setCatchAllDomains] = useState<Record<string, CatchAllDomainSettings>>({})
   const [showSecretKey, setShowSecretKey] = useState(false)
   const [loading, setLoading] = useState(false)
   const { toast } = useToast()
 
 
-  useEffect(() => {
-    fetchConfig()
+  const fetchConfig = useCallback(async () => {
+    const res = await fetch("/api/config", { cache: "no-store" })
+    if (!res.ok) return null
+
+    return await res.json() as {
+      defaultRole: Exclude<Role, typeof ROLES.EMPEROR>,
+      emailDomains: string,
+      adminContact: string,
+      maxEmails: string,
+      turnstile?: {
+        enabled: boolean,
+        siteKey: string,
+        hasSecret?: boolean
+      },
+      catchAll?: {
+        domains: Record<string, CatchAllDomainSettings>
+      }
+    }
   }, [])
 
-  const fetchConfig = async () => {
-    const res = await fetch("/api/config")
-    if (res.ok) {
-      const data = await res.json() as { 
-        defaultRole: Exclude<Role, typeof ROLES.EMPEROR>,
-        emailDomains: string,
-        adminContact: string,
-        maxEmails: string,
-        turnstile?: {
-          enabled: boolean,
-          siteKey: string,
-          secretKey?: string
-        },
-        catchAll?: {
-          domains: Record<string, CatchAllDomainSettings>
-        }
-      }
+  useEffect(() => {
+    let active = true
+    void fetchConfig().then((data) => {
+      if (!active || !data) return
       setDefaultRole(data.defaultRole)
       setEmailDomains(data.emailDomains)
       setAdminContact(data.adminContact)
       setMaxEmails(data.maxEmails || EMAIL_CONFIG.MAX_ACTIVE_EMAILS.toString())
       setTurnstileEnabled(Boolean(data.turnstile?.enabled))
       setTurnstileSiteKey(data.turnstile?.siteKey ?? "")
-      setTurnstileSecretKey(data.turnstile?.secretKey ?? "")
+      setTurnstileHasSecret(Boolean(data.turnstile?.hasSecret))
       setCatchAllDomains(data.catchAll?.domains ?? {})
+    })
+
+    return () => {
+      active = false
     }
-  }
+  }, [fetchConfig])
 
   const handleSave = async () => {
+    const parsedMaxEmails = parsePositiveSafeInteger(maxEmails)
+    if (parsedMaxEmails === null) {
+      toast({
+        title: t("saveFailed"),
+        description: t("maxEmailsInvalid"),
+        variant: "destructive",
+      })
+      return
+    }
+
     setLoading(true)
     let failureDescription = t("saveFailed")
     try {
@@ -104,14 +125,14 @@ export function WebsiteConfigPanel() {
           defaultRole, 
           emailDomains,
           adminContact,
-          maxEmails: maxEmails || EMAIL_CONFIG.MAX_ACTIVE_EMAILS.toString(),
+          maxEmails: String(parsedMaxEmails),
           catchAll: {
             domains: normalizedCatchAllDomains,
           },
           turnstile: {
             enabled: turnstileEnabled,
             siteKey: turnstileSiteKey,
-            secretKey: turnstileSecretKey
+            secretKey: turnstileSecretInput
           }
         }),
       })
@@ -134,6 +155,8 @@ export function WebsiteConfigPanel() {
 
       setEmailDomains(configuredDomains.join(","))
       setCatchAllDomains(normalizedCatchAllDomains)
+      if (turnstileSecretInput.trim()) setTurnstileHasSecret(true)
+      setTurnstileSecretInput("")
       await useConfigStore.getState().fetch()
 
       toast({
@@ -201,7 +224,8 @@ export function WebsiteConfigPanel() {
             <Input 
               type="number"
               min="1"
-              max="100"
+              max={Number.MAX_SAFE_INTEGER}
+              step="1"
               value={maxEmails}
               onChange={(e) => setMaxEmails(e.target.value)}
               placeholder={`${EMAIL_CONFIG.MAX_ACTIVE_EMAILS}`}
@@ -322,20 +346,25 @@ export function WebsiteConfigPanel() {
               <Input
                 id="turnstile-secret-key"
                 type={showSecretKey ? "text" : "password"}
-                value={turnstileSecretKey}
-                onChange={(e) => setTurnstileSecretKey(e.target.value)}
-                placeholder={t("turnstile.secretKeyPlaceholder")}
+                value={turnstileSecretInput}
+                onChange={(e) => setTurnstileSecretInput(e.target.value)}
+                placeholder={t(turnstileHasSecret ? "turnstile.secretKeyConfigured" : "turnstile.secretKeyPlaceholder")}
+                autoComplete="off"
               />
               <Button
                 type="button"
                 variant="ghost"
                 size="sm"
                 className="absolute right-0 top-0 h-full px-3 py-2 hover:bg-transparent"
+                aria-label={showSecretKey ? t("turnstile.hideSecretKey") : t("turnstile.showSecretKey")}
                 onClick={() => setShowSecretKey((prev) => !prev)}
               >
-                {showSecretKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                {showSecretKey ? <EyeOff className="h-4 w-4" aria-hidden="true" /> : <Eye className="h-4 w-4" aria-hidden="true" />}
               </Button>
             </div>
+            <p className="text-xs text-muted-foreground">
+              {t(turnstileHasSecret ? "turnstile.secretKeyStatusConfigured" : "turnstile.secretKeyStatusNotConfigured")}
+            </p>
             <p className="text-xs text-muted-foreground">
               {t("turnstile.secretKeyDescription")}
             </p>

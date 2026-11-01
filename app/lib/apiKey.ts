@@ -9,7 +9,7 @@ import { safeErrorMetadata } from "./safe-error"
 
 type RequestIdentity = { userId: string; roles: Role[]; viaApiKey: boolean }
 
-// Never trust a client-supplied identity header, even behind middleware.
+// Never trust a client-supplied identity header, even behind the proxy.
 export async function getRequestIdentity(requestHeaders?: Headers): Promise<RequestIdentity | undefined> {
   try {
     const headerList = requestHeaders ?? await headers()

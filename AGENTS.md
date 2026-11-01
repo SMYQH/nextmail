@@ -34,7 +34,7 @@ Use **Context7 MCP** for questions about libraries, frameworks, SDKs, APIs, CLIs
 
 ## Project Structure
 
-NextMail: Next.js 15 App Router, React 19, TypeScript, OpenNext on Cloudflare Workers, D1, KV, and separate email/cleanup Workers.
+NextMail: Next.js 16 App Router, React 19, TypeScript, OpenNext on Cloudflare Workers, D1, KV, and separate email/cleanup Workers.
 
 - `app/[locale]/`: localized home, login, mailbox, profile, shared-message pages.
 - `app/api/`: route handlers. `app/lib/`: auth, permissions, DB schema/access, validation, shared logic.
@@ -43,13 +43,14 @@ NextMail: Next.js 15 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 - `app/config/`, `app/types/`: config and types. `app/globals.css`: shared styling and motion.
 - `workers/email-receiver.ts`, `workers/cleanup.ts`: inbound email and scheduled cleanup.
 - `drizzle/`: SQL migrations. `scripts/`: migration, deployment, fixture, webhook, icon tools.
+- `wrangler*.example.json`: tracked Worker binding templates; the generated `wrangler*.json` files stay ignored.
 - `tests/`: Node unit/route tests. `tests/helpers/database.ts`: in-memory SQLite/D1 adapter.
 - `public/`: assets, icons, service worker. `docs/`: project documentation.
 
 ## Setup and Commands
 
 - Use **Node.js 24+** and npm. Run `npm ci` for a clean lockfile-based install; `npm install` only for intentional dependency changes.
-- Copy `.env.deploy.example` to ignored `.env.deploy`. Configure `.env.deploy` and the **three tracked Wrangler JSON files** per `docs/deploy.md`. Apply local migrations as needed.
+- Copy `.env.deploy.example` to ignored `.env.deploy`; put all operator settings there. Keep the three Wrangler JSON binding templates (`wrangler.example.json`, `wrangler.email.example.json`, `wrangler.cleanup.example.json`) tracked and the generated `wrangler*.json` files ignored; full deployment resolves resources and updates their IDs. Apply local migrations as needed.
 
 | Command                       | Action                                                       |
 | ----------------------------- | ------------------------------------------------------------ |
@@ -67,11 +68,21 @@ NextMail: Next.js 15 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 | `npm run generate-test-data`  | Fixture Worker; invocation URL in `docs/develop.md`          |
 | `npm run generate:icons`      | Regenerate app icons                                         |
 | `npm run delete`              | Delete this project's named Cloudflare resources; D1 data is removed |
+| `npm run config:wrangler`     | Generate the ignored local Wrangler configs from the tracked templates |
 
 - Remote commands: `npm run db:migrate-remote`, `npm run deploy`, `npm run deploy:worker`, `npm run deploy:email`, `npm run deploy:cleanup`, `npm run delete`. Run **only within authorized deployment scope**. `npm run delete` removes project-named Cloudflare resources and D1 data, but does not modify GitHub. Inspect migrations before remote application.
 - On Windows, prefer `pwsh`, fallback `powershell`. Use UTF-8 `.ps1` or `.py` files for long/quoting-sensitive scripts.
 - OpenNext Worker builds are not fully supported on Windows. Use Linux/WSL/CI; distinguish environment limits from application failures.
 - For bracketed PowerShell paths such as `app/[locale]/`, use `-LiteralPath` with file cmdlets.
+
+## Editor and Environment Portability
+
+- Contributors use different editors (VS Code, VSCodium, Antigravity and other VS Code forks), operating systems (Windows, macOS, Linux) and clone locations. Never assume a particular editor build, extension set or install path.
+- Keep committed files machine-independent: no absolute paths, drive letters, user names, home directories or editor install paths. Use `${workspaceFolder}` and relative paths in `.vscode/*`, `path.resolve(__dirname, ...)` in scripts, and repository-relative lookups in tools.
+- Prefer the project-local environment: `npm ci`, `npm run <script>`, `node_modules/.bin`, and the repository-local `tsx`, `wrangler`, `playwright` and `drizzle-kit` binaries. Do not depend on global npm installs, a system `wrangler` or a system browser for project work.
+- Shared editor files (`.vscode/launch.json`, `.vscode/tasks.json`) are part of the repository contract. Keep them valid for the bundled js-debug and core VS Code schemas, keep every `preLaunchTask` label in sync with `tasks.json`, and use Node scripts instead of shell one-liners so `cmd.exe`, macOS and Linux shells behave the same.
+- Validate editor configuration against the schemas shipped in `node_modules` or in the extension bundle instead of the locally installed editor, and report which editor the check was performed with.
+- When a check cannot run on the current OS (for example the OpenNext Worker build on Windows), report the limitation instead of committing a machine-specific workaround.
 
 ## Implementation
 
@@ -92,18 +103,19 @@ node --import tsx --experimental-test-module-mocks --test tests/routes.test.ts t
 
 - For DB tests, reuse `tests/helpers/database.ts`; use existing external-service mocks. Assert visible behavior and side effects, including persisted data and external call counts. Restore mocks and close test DBs. See `docs/develop.md` for coverage and concurrency limits.
 - Add focused regression tests or reproducible manual steps, especially for auth, permissions, API routes, DB operations, and Workers.
-- **No automated browser suite is configured**. Check affected UI in both locales, themes, mobile/short viewports, and keyboard/reduced-motion modes as relevant.
+- Run `npm run test:browser` for the bundled-Chromium browser suite. Check affected UI in both locales, themes, mobile/short viewports, and keyboard/reduced-motion modes as relevant.
 - For UI edits, open affected pages, capture and inspect screenshots after transitions settle, and include screenshots in handoff. Build success or a running browser alone does not verify UI.
+- Store browser HTML reports in `.test/playwright/` and test results, screenshots, and logs in `.test/results/`; ignore `.test/`. Never create `playwright-report/`, `.playwright/`, or `test-results/`, and do not use `.agent` for validation artifacts.
 - For docs-only edits, verify paths, commands, and diff; application builds are unnecessary.
 - Report exact validation commands, failures, and skipped checks. PRs must cover behavior, migrations/environment changes, relevant issues, and UI screenshots where applicable. Exclude generated build/test artifacts and unrelated edits.
 
 ## Configuration and Security
 
 - Keep `.env` and other local environment files ignored. Commit only credential-free `.env.deploy.example`.
-- Local deploy reads `.env.deploy` and app `.env`. Keep deployment credentials **only** in `.env.deploy` or process environment, never app `.env*` files.
+- Development, builds, previews, and local deployment use **only** `.env.deploy` or process environment. Do not create `.env`, `.env.local`, other application environment files, or `.dev.vars`. Keep deployment credentials out of application/Worker artifacts.
 - When `REPOSITORY_URL` and `GITHUB_TOKEN` are set, local deployment syncs settings to GitHub Actions repository secrets. CI uses those secrets; **no `.env` fallback**.
 - Never expose credentials in output, logs, screenshots, or PR text. Do not add unrelated secrets.
-- Keep Wrangler JSON tracked. Keep `.dev.vars` ignored; `.dev.vars.example` is the template.
+- Keep the Wrangler JSON templates tracked and the generated `wrangler*.json` files ignored. `.env.deploy.example` is the only environment template; put optional admin settings after required deployment settings.
 - Earlier repository history included `.env`. Rotate old credentials; never restore old refs when publishing the repository.
 
 Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare account**.
@@ -112,22 +124,15 @@ Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare acco
 - If `CUSTOM_DOMAIN` is set: `Workers Routes: Edit`, scoped to that domain's zone.
 - Email routing: `Zone: Read`, `Email Routing Rules: Edit`, scoped to the `EMAIL_DOMAIN` zone.
 - Not required: `Cloudflare Pages: Edit`, `Zone Settings: Read/Edit`, `DNS: Edit`, `API Tokens: Edit`, `Email Routing Addresses: Edit`.
+- Custom-domain deployment also manages project WAF rules: `WAF: Edit` and `Bot Management: Read` are required for the website Zone; standard Bot Fight Mode must be disabled.
 - Chinese deployment instructions: `docs/deploy.md`.
 
-## Subagents and Tool Cost
+<!-- BEGIN:nextjs-agent-rules -->
 
-- **Use subagents when many files are involved**, including repository exploration or large scoped changes, to control cost.
+## This is NOT the Next.js you know
 
-- **Not use subagents when reviewing source code**(this excludes low-intelligence automation tasks such as running tests or performing browser operations).
+This version has breaking changes — APIs, conventions, and file structure may all differ from your training data. Read the relevant guide in `node_modules/next/dist/docs/` (resolved from this file's directory; in monorepos the `next` package may not be visible from the repo root) before writing any code. Heed deprecation notices.
 
-- Give subagents **requirements only**. Do not restate environment or send brief/full change details.
+This block is written and re-added by `next dev` — verify at `node_modules/next/dist/server/lib/generate-agent-files.js`. Removing it from a diff only re-creates the uncommitted change; committing it with your work keeps the tree clean.
 
-- When a tool/command produces high token cost and much irrelevant output, record it here. Next time, use a subagent to run it and ask  subagent for responsing with condense results .
-
-  **Tool:** `exec_command`
-
-  **Command:** `cat docs/review.md docs/develop.md docs/deploy.md docs/usage.md package.json .github/workflows/deploy.yml` — large combined output; delegate documentation inventory and request a concise summary, then read relevant sections directly.
-
-  **Command:** Broad `rg -n` searches in `node_modules/wrangler/wrangler-dist/cli.js` — embedded minified modules can emit very large lines; delegate bounded lookups and request condensed results.
-
-- Codex: **Only GPT 6 Luna** may serve as a subagent. **Effort: Always max.**
+<!-- END:nextjs-agent-rules -->

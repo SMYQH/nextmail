@@ -41,20 +41,35 @@ export function EmailServiceConfig() {
   const [visibleTokens, setVisibleTokens] = useState<Set<string>>(new Set())
   const { toast } = useToast()
 
+  const requestConfig = useCallback(async () => {
+    const response = await fetch("/api/config/email-service", { cache: "no-store" })
+    if (!response.ok) return null
+    return await response.json() as EmailServiceConfig
+  }, [])
+
   const fetchConfig = useCallback(async () => {
     try {
-      const response = await fetch("/api/config/email-service", { cache: "no-store" })
-      if (!response.ok) return
-      const data = await response.json() as EmailServiceConfig
-      setConfig(data)
+      const data = await requestConfig()
+      if (data) setConfig(data)
     } catch (error) {
       console.error("Failed to fetch email service config:", error)
     }
-  }, [])
+  }, [requestConfig])
 
   useEffect(() => {
-    fetchConfig()
-  }, [fetchConfig, websiteConfig?.emailDomains])
+    let active = true
+    void requestConfig()
+      .then(data => {
+        if (active && data) setConfig(data)
+      })
+      .catch(error => {
+        if (active) console.error("Failed to fetch email service config:", error)
+      })
+
+    return () => {
+      active = false
+    }
+  }, [requestConfig, websiteConfig?.emailDomains])
 
   const updateDomain = (domain: string, updates: Partial<DomainConfig>) => {
     setConfig((current) => ({
@@ -134,7 +149,7 @@ export function EmailServiceConfig() {
                         aria-label={t("enableDomain", { domain })}
                         disabled={!domainConfig.configured}
                       />
-                      <span className="truncate text-sm font-medium">{domain}</span>
+                      <span className="truncate text-sm font-medium" title={domain}>{domain}</span>
                       <div className="relative min-w-0">
                         <Input
                           type={tokenVisible ? "text" : "password"}
@@ -182,16 +197,16 @@ export function EmailServiceConfig() {
           <div className="space-y-4">
             <div className="fluent-info-panel p-4 text-sm">
               <p className="mb-3 flex items-center gap-2 font-semibold text-primary">
-                <span className="h-2 w-2 rounded-full bg-blue-500" />
+                <span className="h-2 w-2 rounded-full bg-primary" />
                 {t("fixedRoleLimits")}
               </p>
               <div className="space-y-2 text-foreground">
                 <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-green-500" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-success" />
                   <span><strong>{tCard("roles.EMPEROR")}</strong> - {t("emperorLimit")}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                  <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
                   <span><strong>{tCard("roles.CIVILIAN")}</strong> - {t("civilianLimit")}</span>
                 </div>
               </div>
@@ -199,7 +214,7 @@ export function EmailServiceConfig() {
 
             <div className="space-y-4">
               <div className="flex items-center gap-2">
-                <span className="h-2 w-2 rounded-full bg-orange-500" />
+                <span className="h-2 w-2 rounded-full bg-warning" />
                 <p className="text-sm font-medium text-foreground">{t("configRoleLabel")}</p>
               </div>
               {[

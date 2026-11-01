@@ -10,6 +10,7 @@ import { execFileSync } from "node:child_process"
 import { resolve } from "node:path"
 import { buildAndPreflightBeforeMigration, buildWorkerCandidate } from "../scripts/deploy/worker-deployment-sequence"
 import { prepareNextBuild } from "../scripts/deploy/prepare-next-build"
+import { assertRequiredDeployEnv, REQUIRED_DEPLOY_ENV_NAMES } from "../scripts/deploy/required-env"
 
 test("production builds discard incomplete route types and incremental state without touching source or local data", t => {
   const directory = mkdtempSync(join(tmpdir(), "nextmail-build-cache-"))
@@ -34,48 +35,27 @@ test("production builds discard incomplete route types and incremental state wit
   assert.doesNotThrow(() => prepareNextBuild(directory))
 })
 
-test("build preparation rejects exposed deployment credentials before changing generated output", t => {
+test("build preparation rejects legacy environment files before changing generated output", t => {
   const directory = mkdtempSync(join(tmpdir(), "nextmail-build-unsafe-env-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   mkdirSync(join(directory, ".next"))
   writeFileSync(join(directory, ".next/BUILD_ID"), "previous-build")
   writeFileSync(join(directory, ".env.local"), "CLOUDFLARE_API_TOKEN=synthetic-private-value")
 
-  assert.throws(() => prepareNextBuild(directory), /\.env\.local contains deployment credential CLOUDFLARE_API_TOKEN/)
+  assert.throws(() => prepareNextBuild(directory), /Unsupported local environment files found: \.env\.local/)
   assert.equal(readFileSync(join(directory, ".next/BUILD_ID"), "utf8"), "previous-build")
 })
 
-test("deployment loads its separate env file before initializing Cloudflare and respects CI values", t => {
+test("deployment loads only .env.deploy before initializing Cloudflare and respects process values", t => {
   const directory = mkdtempSync(join(tmpdir(), "nextmail-deploy-env-"))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   writeFileSync(join(directory, ".env.deploy"), "CLOUDFLARE_API_TOKEN=synthetic-token\nAUTH_SECRET=deploy-secret\nEMAIL_DOMAIN=example.com")
-  writeFileSync(join(directory, ".env"), "AUTH_SECRET=application-secret")
   const env = { ...process.env }
   for (const name of ["CLOUDFLARE_API_TOKEN", "AUTH_SECRET", "EMAIL_DOMAIN"]) delete env[name]
   const cloudflare = resolve("scripts/deploy/cloudflare.ts")
   const script = `const assert = require('node:assert/strict'); require(${JSON.stringify(cloudflare)}); assert.equal(process.env.CLOUDFLARE_API_TOKEN, 'synthetic-token'); assert.equal(process.env.EMAIL_DOMAIN, 'example.com'); assert.equal(process.env.AUTH_SECRET, process.env.CI_TEST_AUTH || 'deploy-secret')`
   execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), "-e", script], { cwd: directory, env })
   execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), "-e", script], { cwd: directory, env: { ...env, AUTH_SECRET: "ci-secret", CI_TEST_AUTH: "ci-secret" } })
-})
-
-test("Worker builds reject deployment credentials in every compiled env mode without exposing values", t => {
-  const directory = mkdtempSync(join(tmpdir(), "nextmail-build-env-"))
-  t.after(() => rmSync(directory, { recursive: true, force: true }))
-  writeFileSync(join(directory, ".env.deploy"), "CLOUDFLARE_API_TOKEN=synthetic-deploy-token\nGITHUB_TOKEN=synthetic-github-token")
-  assert.doesNotThrow(() => assertSafeBuildEnv(directory))
-  for (const file of [".env", ".env.local", ".env.production", ".env.production.local", ".env.development", ".env.development.local", ".env.test", ".env.test.local"]) {
-    for (const name of ["CLOUDFLARE_API_TOKEN", "GITHUB_TOKEN", "OPENAPI_WAF_VERIFY_SECRET"]) {
-      writeFileSync(join(directory, file), `${name}=synthetic-private-value`)
-      assert.throws(() => assertSafeBuildEnv(directory), error => {
-        assert.ok(error instanceof Error)
-        assert.ok(error.message.includes(file) && error.message.includes(name))
-        assert.ok(!error.message.includes("synthetic-private-value"))
-        return true
-      })
-    }
-    writeFileSync(join(directory, file), "AUTH_SECRET=synthetic-app-secret\nCLOUDFLARE_API_TOKEN=")
-  }
-  assert.doesNotThrow(() => assertSafeBuildEnv(directory))
 })
 
 test("deployment requires the OpenNext worker artifact and matching Wrangler bindings", t => {
@@ -152,4 +132,25 @@ test("deployment builds and preflights the Worker before migrating D1", async ()
     () => events.push("migration"),
   ), /synthetic webhook preflight failure/)
   assert.deepEqual(events, ["build", "preflight"])
+})
+
+test("deployment refuses to start without the required environment", t => {
+  const directory = mkdtempSync(join(tmpdir(), "nextmail-required-env-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+
+  const complete = Object.fromEntries(REQUIRED_DEPLOY_ENV_NAMES.map(name => [name, `synthetic-${name}`]))
+  assert.doesNotThrow(() => assertRequiredDeployEnv(complete, directory))
+
+  const missingBaseUrl = { ...complete, NEXT_PUBLIC_BASE_URL: "" }
+  assert.throws(() => assertRequiredDeployEnv(missingBaseUrl, directory), error => {
+    assert.ok(error instanceof Error)
+    assert.match(error.message, /NEXT_PUBLIC_BASE_URL/)
+    assert.match(error.message, /public site URL/)
+    return true
+  })
+
+  assert.throws(() => assertRequiredDeployEnv({ ...complete, EMAIL_DOMAIN: "   " }, directory), /EMAIL_DOMAIN/)
+
+  writeFileSync(join(directory, ".env"), "AUTH_SECRET=synthetic-private-value")
+  assert.throws(() => assertRequiredDeployEnv(complete, directory), /\.env/)
 })

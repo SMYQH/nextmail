@@ -60,7 +60,12 @@ export async function PATCH(
     const session = await auth()
     const { id } = await params
 
-    const { enabled } = await request.json() as { enabled: boolean }
+    const body: unknown = await request.json().catch(() => null)
+    if (!body || typeof body !== "object" || Array.isArray(body) ||
+      !("enabled" in body) || typeof body.enabled !== "boolean") {
+      return NextResponse.json({ error: "Invalid enabled value" }, { status: 400 })
+    }
+    const { enabled } = body
     const db = createDb()
     
     const result = await db.update(apiKeys)

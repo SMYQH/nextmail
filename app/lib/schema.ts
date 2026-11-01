@@ -50,6 +50,8 @@ export const emails = sqliteTable("email", {
 }, (table) => ({
   expiresAtIdx: index("email_expires_at_idx").on(table.expiresAt),
   userIdIdx: index("email_user_id_idx").on(table.userId),
+  // The mailbox list pages a user's mailboxes by creation time with an id tiebreaker.
+  userIdCreatedAtIdx: index("email_user_id_created_at_id_idx").on(table.userId, table.createdAt, table.id),
   addressLowerIdx: uniqueIndex("email_address_lower_idx").on(sql`LOWER(${table.address})`),
 }))
 
@@ -65,6 +67,8 @@ export const messages = sqliteTable("message", {
   html: text("html"),
   type: text("type"),
   isRead: integer("is_read", { mode: "boolean" }).notNull().default(false),
+  // Identifies a delivery so a redelivered message is stored only once.
+  deliveryKey: text("delivery_key"),
   receivedAt: integer("received_at", { mode: "timestamp_ms" })
     .notNull()
     .$defaultFn(() => new Date()),
@@ -75,6 +79,7 @@ export const messages = sqliteTable("message", {
   emailIdIdx: index("message_email_id_idx").on(table.emailId),
   emailReadIdx: index("message_email_read_idx").on(table.emailId, table.isRead, table.type),
   emailIdReceivedAtTypeIdx: index("message_email_id_received_at_type_idx").on(table.emailId, table.receivedAt, table.type),
+  deliveryKeyUnique: uniqueIndex("message_delivery_key_unique").on(table.deliveryKey),
 }))
 
 // Stable routing survives mailbox renames and configuration-store retries.
@@ -106,7 +111,7 @@ export const webhooks = sqliteTable('webhook', {
     .notNull()
     .$defaultFn(() => new Date()),
 }, (table) => ({
-  userIdIdx: index('webhook_user_id_idx').on(table.userId),
+  userIdIdx: uniqueIndex('webhook_user_id_unique').on(table.userId),
 }))
 
 export const roles = sqliteTable("role", {
@@ -142,6 +147,8 @@ export const apiKeys = sqliteTable('api_keys', {
 }, (table) => ({
   nameUserIdUnique: uniqueIndex('name_user_id_unique').on(table.name, table.userId),
   userIdIdx: index('api_keys_user_id_idx').on(table.userId),
+  // The cleanup worker selects expired keys by this column on every batch.
+  expiresAtIdx: index('api_keys_expires_at_idx').on(table.expiresAt),
 }));
 
 export const emailShares = sqliteTable('email_share', {
@@ -157,6 +164,8 @@ export const emailShares = sqliteTable('email_share', {
 }, (table) => ({
   emailIdIdx: index('email_share_email_id_idx').on(table.emailId),
   tokenIdx: index('email_share_token_idx').on(table.token),
+  // The cleanup worker selects expired shares by this column on every batch.
+  expiresAtIdx: index('email_share_expires_at_idx').on(table.expiresAt),
 }));
 
 export const messageShares = sqliteTable('message_share', {
@@ -172,6 +181,8 @@ export const messageShares = sqliteTable('message_share', {
 }, (table) => ({
   messageIdIdx: index('message_share_message_id_idx').on(table.messageId),
   tokenIdx: index('message_share_token_idx').on(table.token),
+  // The cleanup worker selects expired shares by this column on every batch.
+  expiresAtIdx: index('message_share_expires_at_idx').on(table.expiresAt),
 }));
 
 

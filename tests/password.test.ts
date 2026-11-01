@@ -2,6 +2,19 @@ import test from "node:test"
 import assert from "node:assert/strict"
 import { hashPassword, comparePassword, needsPasswordUpgrade } from "../app/lib/password"
 
+test("importing the password helper does not start asynchronous cryptography", async t => {
+  const subtle = globalThis.crypto.subtle
+  const originalDigest = subtle.digest.bind(subtle)
+  const digest = t.mock.method(subtle, "digest", async (algorithm: AlgorithmIdentifier, data: BufferSource) => {
+    return originalDigest(algorithm, data)
+  })
+
+  const moduleUrl = new URL(`../app/lib/password.ts?module-evaluation-${Date.now()}`, import.meta.url)
+  await import(moduleUrl.href)
+
+  assert.equal(digest.mock.callCount(), 0)
+})
+
 test("password hashes are salted and verify the complete Unicode password", async () => {
   const password = "🔐".repeat(24)
   const a = await hashPassword(password)

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useState } from "react"
 import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -30,12 +30,15 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [emailName, setEmailName] = useState("")
-  const [currentDomain, setCurrentDomain] = useState("")
+  const [selectedDomain, setSelectedDomain] = useState("")
   const [expiryTime, setExpiryTime] = useState(EXPIRY_OPTIONS[1].value.toString())
   const { toast } = useToast()
   const { copyToClipboard } = useCopy()
   const mailboxName = emailName.trim().toLowerCase()
   const availableDomains = config?.availableEmailDomains ?? EMPTY_DOMAINS
+  const currentDomain = availableDomains.includes(selectedDomain)
+    ? selectedDomain
+    : availableDomains[0] ?? ""
 
   const generateRandomName = () => setEmailName(nanoid(8))
 
@@ -99,12 +102,6 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
     }
   }
 
-  useEffect(() => {
-    if (!availableDomains.includes(currentDomain)) {
-      setCurrentDomain(availableDomains[0] ?? "")
-    }
-  }, [availableDomains, currentDomain])
-
   return (
     <Dialog open={open} onOpenChange={value => {
       setOpen(value)
@@ -138,7 +135,7 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
               className="min-w-0 flex-1 basis-40"
             />
             {availableDomains.length > 1 && (
-              <Select value={currentDomain} onValueChange={setCurrentDomain}>
+              <Select value={currentDomain} onValueChange={setSelectedDomain}>
                 <SelectTrigger className="w-[180px] max-w-full">
                   <SelectValue />
                 </SelectTrigger>
@@ -185,7 +182,7 @@ export function CreateDialog({ onEmailCreated }: CreateDialogProps) {
             <span className="shrink-0">{t("domain")}:</span>
             {mailboxName && currentDomain ? (
               <div className="flex items-center gap-2 min-w-0">
-                <span className="truncate">{`${mailboxName}@${currentDomain}`}</span>
+                <span className="truncate" title={`${mailboxName}@${currentDomain}`}>{`${mailboxName}@${currentDomain}`}</span>
                 <Button
                   type="button"
                   variant="ghost"

@@ -5,7 +5,7 @@ import { validateWebhookUrl, WebhookPolicyError, type WebhookPolicyCode } from "
 import { auth } from "@/lib/auth"
 import { createDb } from "@/lib/db"
 import { webhooks } from "@/lib/schema"
-import { eq } from "drizzle-orm"
+import { eq, sql } from "drizzle-orm"
 import { z } from "zod"
 
 
@@ -20,7 +20,8 @@ export async function GET() {
 
   const db = createDb()
   const webhook = await db.query.webhooks.findFirst({
-    where: eq(webhooks.userId, session!.user!.id!)
+    where: eq(webhooks.userId, session!.user!.id!),
+    orderBy: (table, { desc }) => [desc(table.updatedAt)]
   })
 
   let setupError: WebhookPolicyCode | undefined
@@ -29,7 +30,16 @@ export async function GET() {
   } catch (error) {
     if (error instanceof WebhookPolicyError && (webhook || error.code === "setupRequired")) setupError = error.code
   }
-  return Response.json({ ...(webhook || { enabled: false, url: "" }), setupError })
+  // The signing secret never leaves the server; report only whether one exists.
+  return Response.json(
+    {
+      enabled: webhook?.enabled ?? false,
+      url: webhook?.url ?? "",
+      hasSecret: Boolean(webhook?.secret),
+      setupError
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  )
 }
 
 export async function POST(request: Request) {
@@ -47,30 +57,27 @@ export async function POST(request: Request) {
     const db = createDb()
     const now = new Date()
 
-    const existingWebhook = await db.query.webhooks.findFirst({
-      where: eq(webhooks.userId, session.user.id)
-    })
-
-    if (existingWebhook) {
-      await db
-        .update(webhooks)
-        .set({
-          url,
-          secret: existingWebhook.secret || crypto.randomUUID(),
-          enabled,
-          updatedAt: now
-        })
-        .where(eq(webhooks.userId, session.user.id))
-    } else {
-      await db
-        .insert(webhooks)
-        .values({
-          userId: session.user.id,
-          secret: crypto.randomUUID(),
+    // One webhook row per user: upsert on the unique user index so a second row
+    // can never be created, and keep the existing signing secret.
+    await db
+      .insert(webhooks)
+      .values({
+        userId: session.user.id,
+        secret: crypto.randomUUID(),
+        url,
+        enabled,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: webhooks.userId,
+        set: {
           url,
           enabled,
-        })
-    }
+          updatedAt: now,
+          secret: sql`coalesce(${webhooks.secret}, excluded.secret)`,
+        },
+      })
 
     return Response.json({ success: true })
   } catch (error) {

@@ -43,6 +43,18 @@ test("migrations enforce case-insensitive email ownership", t => {
   assert.throws(() => db.exec("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('b','alice@example.com','b',0,999)"), /UNIQUE/)
 })
 
+test("mailbox pagination migration and snapshot include user, creation time, and ID in the index", t => {
+  const db = migratedDatabase(t)
+  const columns = db.prepare("PRAGMA index_info('email_user_id_created_at_id_idx')").all().map(row => row.name)
+  assert.deepEqual(columns, ["userId", "created_at", "id"])
+
+  const previousSnapshot = JSON.parse(readFileSync("drizzle/meta/0025_snapshot.json", "utf8"))
+  const snapshot = JSON.parse(readFileSync("drizzle/meta/0026_snapshot.json", "utf8"))
+  assert.equal(snapshot.prevId, previousSnapshot.id)
+  assert.deepEqual(snapshot.tables.email.indexes.email_user_id_created_at_id_idx.columns, columns)
+  assert.equal(snapshot.tables.email.indexes.email_user_id_created_at_id_idx.isUnique, false)
+})
+
 test("arrival migration backfills existing mail and atomically records new insertions", t => {
   const db = new DatabaseSync(":memory:", { enableDoubleQuotedStringLiterals: true })
   t.after(() => db.close())

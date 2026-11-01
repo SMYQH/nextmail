@@ -28,6 +28,17 @@
     "deleteDescription": "Are you sure you want to delete {email}? This will also delete all messages in this mailbox and cannot be undone.",
     "deleteSuccess": "Email deleted successfully",
     "deleteFailed": "Failed to delete email",
+    "selectMailbox": "Select {email} for deletion",
+    "selectedCount": "{count} selected",
+    "maxSelected": "You can select up to 40 mailboxes at a time.",
+    "clearSelection": "Clear selection",
+    "deleteSelected": "Delete selected ({count})",
+    "bulkDeleteConfirm": "Delete selected mailboxes?",
+    "bulkDeleteDescription": "Delete {count} selected mailboxes and all their messages and sharing links? This cannot be undone.",
+    "bulkDeleteSuccess": "{count} mailboxes deleted successfully",
+    "bulkDeleteFailed": "Could not confirm deletion. Refresh the mailbox before retrying; your selection is still saved.",
+    "bulkDeleteUnavailable": "One or more selected mailboxes are unavailable or cannot be deleted. No mailboxes were removed; refresh and try again.",
+    "bulkDeleting": "Deleting…",
     "error": "Error",
     "success": "Success",
     "domainFilter": "Filter mailboxes by domain",
@@ -133,6 +144,7 @@
     "deleteFailed": "Failed to delete",
     "createSuccess": "Share link created successfully",
     "createFailed": "Failed to create share link",
+    "loadFailed": "Failed to load share links",
     "shareButton": "Share"
   },
   "shareMessage": {
@@ -163,6 +175,7 @@
     "deleteFailed": "Failed to delete",
     "createSuccess": "Share link created successfully",
     "createFailed": "Failed to create share link",
+    "loadFailed": "Failed to load share links",
     "shareButton": "Share Message"
   },
   "shared": {

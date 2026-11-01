@@ -2,12 +2,15 @@
 
 import { useCallback, useEffect, useRef, useState } from "react"
 import { useSession } from "next-auth/react"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
+import { SharedDateTime } from "./shared-date-time"
+import { isPermanentExpiry } from "@/lib/shared-date"
 import { CreateDialog } from "./create-dialog"
 import { ShareDialog } from "./share-dialog"
 import { Inbox, Mail, RefreshCw, Trash2 } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useThrottle } from "@/hooks/use-throttle"
 import { EMAIL_CONFIG } from "@/config"
 import { useToast } from "@/components/ui/use-toast"
@@ -27,6 +30,7 @@ import { useConfig } from "@/hooks/use-config"
 import { mergeRefreshedMessages } from "@/lib/message-list-refresh"
 import { MAILBOX_UPDATE_EVENT, mailboxSnapshots, type MailboxUpdate } from "@/lib/mailbox-events"
 import { LatestRequestGate } from "@/lib/latest-request-gate"
+import { EmptyState } from "@/components/ui/empty-state"
 
 interface Email {
   id: string
@@ -54,11 +58,14 @@ interface EmailListScope {
   domain: string
 }
 
+const MAX_SELECTED_EMAILS = 40
+
 export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const { data: session } = useSession()
   const userId = session?.user?.id
   const { config } = useConfig()
   const { role } = useUserRole()
+  const locale = useLocale()
   const t = useTranslations("emails.list")
   const tCommon = useTranslations("common.actions")
   const [emails, setEmails] = useState<Email[]>([])
@@ -74,6 +81,10 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const [loadingMore, setLoadingMore] = useState(false)
   const [total, setTotal] = useState(0)
   const [emailToDelete, setEmailToDelete] = useState<Email | null>(null)
+  const [selectedEmailIds, setSelectedEmailIds] = useState<Set<string>>(new Set())
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false)
+  const [bulkDeleting, setBulkDeleting] = useState(false)
+  const bulkDeleteInFlightRef = useRef(false)
   const { toast } = useToast()
 
   const replaceEmails = useCallback((nextEmails: Email[]) => {
@@ -161,6 +172,8 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
       setLoadingMore(false)
       setTotal(0)
       setEmailToDelete(null)
+      setSelectedEmailIds(new Set())
+      setBulkDeleteOpen(false)
       if (emailListContainerRef.current) emailListContainerRef.current.scrollTop = 0
     }
     if (session) fetchEmails()
@@ -198,6 +211,12 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
       }
 
       replaceEmails(emailsRef.current.filter(e => e.id !== email.id))
+      setSelectedEmailIds(current => {
+        if (!current.has(email.id)) return current
+        const next = new Set(current)
+        next.delete(email.id)
+        return next
+      })
       setTotal(prev => prev - 1)
 
       toast({
@@ -219,6 +238,74 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
     }
   }
 
+  const handleBulkDelete = async () => {
+    const ids = [...selectedEmailIds]
+    if (!ids.length || bulkDeleteInFlightRef.current) return
+
+    bulkDeleteInFlightRef.current = true
+    setBulkDeleting(true)
+    try {
+      const response = await fetch("/api/emails/bulk", {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids }),
+      })
+
+      if (!response.ok) {
+        toast({
+          title: t("error"),
+          description: response.status === 403 ? t("bulkDeleteUnavailable") : t("bulkDeleteFailed"),
+          variant: "destructive",
+        })
+        return
+      }
+
+      const result = await response.json() as { success?: boolean; deletedIds?: unknown }
+      const deletedIds = result.deletedIds
+      if (
+        result.success !== true ||
+        !Array.isArray(deletedIds) ||
+        deletedIds.length !== ids.length ||
+        !ids.every(id => deletedIds.includes(id))
+      ) {
+        toast({
+          title: t("error"),
+          description: t("bulkDeleteFailed"),
+          variant: "destructive",
+        })
+        return
+      }
+
+      const deletedSet = new Set(deletedIds as string[])
+      gateRef.current.invalidate()
+      replaceEmails(emailsRef.current.filter(email => !deletedSet.has(email.id)))
+      setSelectedEmailIds(current => {
+        const next = new Set(current)
+        for (const id of deletedSet) next.delete(id)
+        return next
+      })
+      setTotal(current => Math.max(0, current - deletedSet.size))
+      setLoading(false)
+      setLoadingMore(false)
+      setRefreshing(false)
+      if (selectedEmailId && deletedSet.has(selectedEmailId)) onEmailSelect(null)
+      setBulkDeleteOpen(false)
+      toast({
+        title: t("success"),
+        description: t("bulkDeleteSuccess", { count: deletedSet.size }),
+      })
+    } catch {
+      toast({
+        title: t("error"),
+        description: t("bulkDeleteFailed"),
+        variant: "destructive",
+      })
+    } finally {
+      bulkDeleteInFlightRef.current = false
+      setBulkDeleting(false)
+    }
+  }
+
   if (!session) return null
 
   return (
@@ -231,7 +318,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
               size="icon"
               aria-label={tCommon("refresh")}
               onClick={handleRefresh}
-              disabled={refreshing}
+              disabled={refreshing || bulkDeleting}
               className="h-8 w-8"
               aria-busy={refreshing}
             >
@@ -247,6 +334,33 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
           </div>
           <CreateDialog onEmailCreated={handleRefresh} />
         </div>
+        {selectedEmailIds.size > 0 && (
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
+            <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
+              {t("selectedCount", { count: selectedEmailIds.size })}
+              {selectedEmailIds.size === MAX_SELECTED_EMAILS && ` · ${t("maxSelected")}`}
+            </span>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={() => setBulkDeleteOpen(true)}
+                disabled={bulkDeleting}
+              >
+                <Trash2 aria-hidden="true" className="mr-1.5 h-4 w-4" />
+                {t("deleteSelected", { count: selectedEmailIds.size })}
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedEmailIds(new Set())}
+                disabled={bulkDeleting}
+              >
+                {t("clearSelection")}
+              </Button>
+            </div>
+          </div>
+        )}
         <div role="group" className="flex shrink-0 gap-1 overflow-x-auto border-b border-border/70 p-2" aria-label={t("domainFilter")}>
           {["", ...(config?.emailDomainsArray || [])].map(value => (
             <Button key={value} variant={domain === value ? "secondary" : "ghost"} size="sm"
@@ -268,20 +382,43 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                     email.isCatchAll && "border-b border-border/70"
                   )}
                 >
+                  {!email.isCatchAll && (
+                    <div className="relative flex shrink-0 items-center">
+                      <Checkbox
+                        id={`mailbox-select-${email.id}`}
+                        checked={selectedEmailIds.has(email.id)}
+                        onChange={checked => setSelectedEmailIds(current => {
+                          if (checked) {
+                            if (current.has(email.id) || current.size >= MAX_SELECTED_EMAILS) return current
+                            return new Set(current).add(email.id)
+                          }
+                          if (!current.has(email.id)) return current
+                          const next = new Set(current)
+                          next.delete(email.id)
+                          return next
+                        })}
+                        disabled={bulkDeleting || (!selectedEmailIds.has(email.id) && selectedEmailIds.size >= MAX_SELECTED_EMAILS)}
+                        className="h-8 w-8 rounded-[3px]"
+                      />
+                      <label htmlFor={`mailbox-select-${email.id}`} className="sr-only">
+                        {t("selectMailbox", { email: email.address })}
+                      </label>
+                    </div>
+                  )}
                   <button type="button" onClick={() => onEmailSelect(email)}
                     aria-pressed={selectedEmailId === email.id}
                     className="flex flex-1 min-w-0 items-center gap-2 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                   {email.isCatchAll ? <Inbox aria-label={t("catchAll")} className="h-4 w-4 shrink-0 text-primary" /> : <Mail className="h-4 w-4 shrink-0 text-primary/60" />}
                   <div className="truncate flex-1">
-                    <div className="font-medium truncate">{email.address}</div>
+                    <div className="font-medium truncate" title={email.address}>{email.address}</div>
                     <div className="text-xs text-muted-foreground">
                       <span className="block" aria-label={t("messageStats", { unread: email.unreadMessages || 0, total: email.totalMessages || 0 })}>
                         {email.unreadMessages || 0} / {email.totalMessages || 0}
                       </span>
-                      {new Date(email.expiresAt).getFullYear() === 9999 ? (
+                      {isPermanentExpiry(email.expiresAt) ? (
                         t("permanent")
                       ) : (
-                        `${t("expiresAt")}: ${new Date(email.expiresAt).toLocaleString()}`
+                        <>{t("expiresAt")}: <SharedDateTime value={email.expiresAt} locale={locale} /></>
                       )}
                     </div>
                   </div>
@@ -293,6 +430,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                       size="icon"
                       className="h-8 w-8"
                       aria-label={tCommon("delete")}
+                      disabled={bulkDeleting}
                       onClick={(e) => {
                         e.stopPropagation()
                         setEmailToDelete(email)
@@ -310,9 +448,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
               )}
             </div>
           ) : (
-            <div className="text-center text-sm text-muted-foreground">
-              {t("noEmails")}
-            </div>
+            <EmptyState message={t("noEmails")} />
           )}
         </div>
       </div>
@@ -332,6 +468,36 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
               onClick={() => emailToDelete && handleDelete(emailToDelete)}
             >
               {tCommon("delete")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog
+        open={bulkDeleteOpen}
+        onOpenChange={open => {
+          if (!bulkDeleting) setBulkDeleteOpen(open)
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("bulkDeleteConfirm")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t("bulkDeleteDescription", { count: selectedEmailIds.size })}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={bulkDeleting}>{tCommon("cancel")}</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive hover:bg-destructive/90"
+              disabled={bulkDeleting || selectedEmailIds.size === 0}
+              aria-busy={bulkDeleting}
+              onClick={event => {
+                event.preventDefault()
+                void handleBulkDelete()
+              }}
+            >
+              {bulkDeleting ? t("bulkDeleting") : t("deleteSelected", { count: selectedEmailIds.size })}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

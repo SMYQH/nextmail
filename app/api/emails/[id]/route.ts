@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 import { createDb } from "@/lib/db"
 import { catchAllMailboxes, emails, messages, messageArrivals } from "@/lib/schema"
 import { eq, and, lt, or, sql, ne, isNull, gt, asc } from "drizzle-orm"
-import { encodeCursor, decodeCursor, encodeArrivalCursor, decodeArrivalCursor } from "@/lib/cursor"
+import { encodeCursor, decodeCursor, encodeArrivalCursor, decodeArrivalCursor, InvalidCursorError } from "@/lib/cursor"
 import { getUserId } from "@/lib/apiKey"
 import { checkBasicSendPermission } from "@/lib/send-permissions"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
@@ -42,9 +42,6 @@ export async function DELETE(
     if (Object.values(catchAll).some(config => config.address === email.address.toLowerCase())) {
       return NextResponse.json({ error: "Manage Catch-all mailboxes in website settings" }, { status: 403 })
     }
-    await db.delete(messages)
-      .where(eq(messages.emailId, id))
-
     await db.delete(emails)
       .where(eq(emails.id, id))
 
@@ -189,6 +186,9 @@ export async function GET(
       ...(!cursorStr ? await getStatistics() : {}),
     })
   } catch (error) {
+    if (error instanceof InvalidCursorError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
     console.error('Failed to fetch messages:', safeErrorMetadata(error))
     return NextResponse.json(
       { error: "Failed to fetch messages" },
@@ -197,7 +197,7 @@ export async function GET(
   }
 }
 
-function serializeMessage(msg: Omit<typeof messages.$inferSelect, "content" | "html">) {
+function serializeMessage(msg: Omit<typeof messages.$inferSelect, "content" | "html" | "deliveryKey">) {
   return {
     id: msg.id,
     from_address: msg.fromAddress,

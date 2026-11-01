@@ -14,8 +14,14 @@ export async function GET(request: Request) {
   }
 
   const { searchParams } = new URL(request.url)
-  const page = Math.max(1, Number(searchParams.get("page") || "1"))
-  const pageSize = Math.min(50, Math.max(1, Number(searchParams.get("pageSize") || "20")))
+  const page = Number(searchParams.get("page") ?? "1")
+  const pageSize = Number(searchParams.get("pageSize") ?? "20")
+  if (!Number.isSafeInteger(page) || page < 1) {
+    return Response.json({ error: "无效的页码" }, { status: 400 })
+  }
+  if (!Number.isSafeInteger(pageSize) || pageSize < 1 || pageSize > 50) {
+    return Response.json({ error: "无效的分页大小" }, { status: 400 })
+  }
   const search = searchParams.get("search")?.trim()
 
   const db = createDb()
@@ -98,8 +104,8 @@ export async function POST(request: Request) {
   }
 
   try {
-    const json = await request.json()
-    const { searchText } = json as { searchText: string }
+    const json = await request.json().catch(() => null) as { searchText?: unknown } | null
+    const searchText = typeof json?.searchText === "string" ? json.searchText : ""
 
     if (!searchText) {
       return Response.json({ error: "请提供用户名或邮箱地址" }, { status: 400 })

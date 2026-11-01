@@ -1,5 +1,6 @@
 import { safeErrorMetadata } from "./safe-error"
 import NextAuth from "next-auth"
+import type { Session } from "next-auth"
 import GitHub from "next-auth/providers/github"
 import Google from "next-auth/providers/google"
 import { DrizzleAdapter } from "@auth/drizzle-adapter"
@@ -9,7 +10,7 @@ import { eq } from "drizzle-orm"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
 import { Permission, ROLES, Role } from "./permissions"
 import CredentialsProvider from "next-auth/providers/credentials"
-import { hashPassword, comparePassword, needsPasswordUpgrade } from "./password"
+import { hashPassword, comparePassword, getDummyPasswordHash, needsPasswordUpgrade } from "./password"
 import { authSchema, AuthSchema } from "@/lib/validation"
 import { generateAvatarUrl } from "./avatar"
 import { getUserId } from "./apiKey"
@@ -175,6 +176,9 @@ export const {
             })
 
             if (!user) {
+              // Perform the same password verification work as a real account so the
+              // response time does not reveal whether the username exists.
+              await comparePassword(parsedCredentials.password, await getDummyPasswordHash())
               throw new CredentialsError("invalid_credentials")
             }
 
@@ -227,26 +231,28 @@ export const {
         },
         async session({ session, token }) {
           if (token && session.user) {
+            const db = createDb()
+            // A deleted account must not keep an authenticated session, and its
+            // role rows are gone with it, so the account is resolved first.
+            const account = await db.query.users.findFirst({
+              where: eq(users.id, token.id as string),
+            })
+            if (!account) {
+              return { ...session, user: undefined } as unknown as Session
+            }
+
             session.user.id = token.id as string
             session.user.name = token.name as string
             session.user.username = token.username as string
             session.user.image = token.image as string
 
-            const db = createDb()
-            let userRoleRecords = await db.query.userRoles.findMany({
+            // Roles are resolved read-only. Granting a role here would silently
+            // re-promote any account whose role was removed; the sign-in event
+            // is the only path that grants a role.
+            const userRoleRecords = await db.query.userRoles.findMany({
               where: eq(userRoles.userId, session.user.id),
               with: { role: true },
             })
-
-            if (!userRoleRecords.length) {
-              const defaultRole = await getDefaultRole()
-              const role = await findOrCreateRole(db, defaultRole)
-              await assignDefaultRoleIfMissing(session.user.id, role.id)
-              userRoleRecords = await db.query.userRoles.findMany({
-                where: eq(userRoles.userId, session.user.id),
-                with: { role: true },
-              })
-            }
 
             session.user.roles = userRoleRecords.map(ur => ({
               name: ur.role.name,

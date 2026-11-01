@@ -4,7 +4,7 @@ import { createDb } from "@/lib/db"
 import { and, eq, gt, inArray, lt, notInArray, or, sql } from "drizzle-orm"
 import { NextResponse } from "next/server"
 import { catchAllMailboxes, emails, messages } from "@/lib/schema"
-import { encodeCursor, decodeCursor } from "@/lib/cursor"
+import { encodeCursor, decodeCursor, InvalidCursorError } from "@/lib/cursor"
 import { getUserId } from "@/lib/apiKey"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
 import { CATCHALL_EMAIL_KEY, parseCatchAllEmailConfig } from "@/lib/catch-all"
@@ -97,6 +97,9 @@ export async function GET(request: Request) {
       total: count ? Number(count.count) : undefined,
     })
   } catch (error) {
+    if (error instanceof InvalidCursorError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
     console.error('Failed to fetch user emails:', safeErrorMetadata(error))
     return NextResponse.json({ error: "Failed to fetch emails" }, { status: 500 })
   }

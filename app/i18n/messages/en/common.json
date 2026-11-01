@@ -17,7 +17,8 @@
     "share": "Share",
     "copy": "Copy",
     "close": "Close",
-    "toggleTheme": "Toggle theme"
+    "toggleTheme": "Toggle theme",
+    "switchLanguage": "Switch language"
   },
   "nav": {
     "home": "Home",
@@ -26,5 +27,9 @@
     "logout": "Logout",
     "backToMailbox": "Back to Mailbox"
   },
-  "github": "Get Source Code"
+  "github": "Get Source Code",
+  "pagination": {
+    "loadMore": "Load more",
+    "loadFailed": "Failed to load more items"
+  }
 }

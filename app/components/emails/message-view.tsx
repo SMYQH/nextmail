@@ -1,12 +1,14 @@
 "use client"
 
 import { useState, useEffect, useRef } from "react"
-import { useTranslations } from "next-intl"
-import { Loader2, Share2 } from "lucide-react"
+import { useLocale, useTranslations } from "next-intl"
+import { SharedDateTime } from "./shared-date-time"
+import { Loader2, Share2, AlertCircle } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
 import { EmailHtml } from "./email-html"
 import { useToast } from "@/components/ui/use-toast"
+import { Button } from "@/components/ui/button"
 import { ShareMessageDialog } from "./share-message-dialog"
 import { mailboxSnapshots, notifyMailboxUpdate } from "@/lib/mailbox-events"
 
@@ -33,6 +35,7 @@ interface MessageViewProps {
 type ViewMode = "html" | "text"
 
 export function MessageView({ emailId, messageId, messageType = 'received', onRead }: MessageViewProps) {
+  const locale = useLocale()
   const t = useTranslations("emails.messageView")
   const tList = useTranslations("emails.list")
   const [message, setMessage] = useState<Message | null>(null)
@@ -41,20 +44,24 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
   const [viewMode, setViewMode] = useState<ViewMode>("html")
   const { toast } = useToast()
   const notifiedRead = useRef(false)
+  // The retry control reuses the loader of the current message, so a failed
+  // message is fetched again without reloading the application and losing the
+  // mailbox, tab and scroll state.
+  const reloadRef = useRef<() => Promise<void>>(() => Promise.resolve())
 
   useEffect(() => {
     const controller = new AbortController()
-    const snapshot = mailboxSnapshots.snapshot()
     const fetchMessage = async () => {
+      const snapshot = mailboxSnapshots.snapshot()
       try {
         setLoading(true)
         setError(null)
         setMessage(null)
-        
+
         const url = `/api/emails/${emailId}/${messageId}${messageType === 'sent' ? '?type=sent' : ''}`;
-        
+
         const response = await fetch(url, { signal: controller.signal })
-        
+
         if (!response.ok) {
           const errorData = await response.json()
           if (controller.signal.aborted) return
@@ -67,7 +74,7 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
           })
           return
         }
-        
+
         const data = await response.json() as { message: Message; total?: number; unread?: number }
         if (controller.signal.aborted) return
         setMessage(data.message)
@@ -85,7 +92,7 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
         const errorMessage = t("networkError")
         setError(errorMessage)
         toast({
-          title: tList("error"), 
+          title: tList("error"),
           description: errorMessage,
           variant: "destructive"
         })
@@ -95,6 +102,7 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
       }
     }
 
+    reloadRef.current = fetchMessage
     fetchMessage()
     return () => controller.abort()
   }, [emailId, messageId, messageType, onRead, toast, t, tList])
@@ -110,14 +118,14 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
 
   if (error) {
     return (
-      <div className="flex flex-col items-center justify-center h-32 text-center">
-        <p className="text-sm text-destructive mb-2">{error}</p>
-        <button 
-          onClick={() => window.location.reload()} 
-          className="text-xs text-primary hover:underline"
-        >
+      <div className="fluent-empty-state" role="alert">
+        <div className="fluent-mark p-4">
+          <AlertCircle className="h-7 w-7 text-destructive" aria-hidden="true" />
+        </div>
+        <p className="max-w-52 leading-relaxed text-destructive">{error}</p>
+        <Button variant="outline" onClick={() => void reloadRef.current()}>
           {t("retry")}
-        </button>
+        </Button>
       </div>
     )
   }
@@ -147,7 +155,7 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
           {message.to_address && (
             <p>{t("to")}: {message.to_address}</p>
           )}
-          <p>{t("time")}: {new Date(message.sent_at || message.received_at || 0).toLocaleString()}</p>
+          <p>{t("time")}: <SharedDateTime value={message.sent_at || message.received_at || 0} locale={locale} /></p>
         </div>
       </div>
       
@@ -184,7 +192,7 @@ export function MessageView({ emailId, messageId, messageType = 'received', onRe
         {viewMode === "html" && message.html ? (
           <EmailHtml html={message.html} title={message.subject} />
         ) : (
-          <div className="p-4 text-sm whitespace-pre-wrap">
+          <div className="p-4 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
             {message.content}
           </div>
         )}

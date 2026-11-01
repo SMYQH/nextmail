@@ -25,7 +25,7 @@ export default async function MailboxPage({
 
   return (
     <div className="fluent-shell h-dvh overflow-hidden">
-      <div className="relative z-10 container mx-auto h-full px-4 lg:px-8 max-w-[1600px]">
+      <div className="relative z-10 container h-full">
         <Header />
         <main className="fluent-page-enter h-full">
           {hasPermission ? (

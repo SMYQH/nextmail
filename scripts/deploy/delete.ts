@@ -17,6 +17,8 @@ import {
   deleteWorkerRoute,
   deleteWorkerScript,
   disableEmailCatchAll,
+  readPreviousCatchAll,
+  restoreEmailCatchAll,
   PROJECT_WORKER_NAMES,
   verifyCloudflareDeployAccess,
   WORKER_NAME,
@@ -121,8 +123,15 @@ export async function deleteProjectResources() {
   console.log(`D1: ${database?.uuid ?? "none found"}`);
 
   if (catchAllTargetsEmailWorker) {
-    await disableEmailCatchAll(preflight.emailCatchAllTarget.zone.id!, catchAll!);
-    console.log("Disabled the NextMail Email Routing Catch All.");
+    const zoneId = preflight.emailCatchAllTarget.zone.id!;
+    const previous = namespace?.id ? await readPreviousCatchAll(namespace.id, zoneId) : undefined;
+    if (previous?.rule) {
+      await restoreEmailCatchAll(zoneId, previous);
+      console.log("Restored the previous Email Routing Catch All rule.");
+    } else {
+      await disableEmailCatchAll(zoneId, catchAll!);
+      console.log("Disabled the NextMail Email Routing Catch All; no previous rule was recorded.");
+    }
   }
 
   for (const item of workerRoutes) {

@@ -4,6 +4,67 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 175 | Review ledger rows record implementation details and verification narratives. | Resolved locally. |
+| 174 | Canonical and Open Graph links fall back to the request host. | Resolved locally; production deployment unverified. |
+| 173 | The shared editor debug configuration used invalid schema keys and a misplaced compound. | Resolved locally. |
+| 172 | Tracked Wrangler configs publish deployment resource IDs. | Resolved locally; the remote still needs a force-push. |
+| 171 | The framework release deprecates the `middleware` file convention. | Resolved locally. |
+| 170 | Cold sign-ins can fail with CSRF errors. | Resolved locally. |
+| 169 | The framework release blocks supported OpenNext builds. | Resolved locally; live deployment remains unverified. |
+| 168 | Turnstile browser tests erase existing local configuration. | Resolved locally. |
+| 167 | Gate and snapshot timeouts leave descendant processes running. | Resolved locally. |
+| 166 | API-key refreshes discard returned changes to already-loaded keys. | Resolved locally. |
+| 165 | Scoped commits interpret bracketed filenames as Git patterns. | Resolved locally. |
+| 164 | Failed environment preprocessing leaves earlier credential files stripped. | Resolved locally. |
+| 163 | Role backfill reads an obsolete namespace when deployment overrides KV. | Resolved locally; remote deployment unverified. |
+| 162 | API-key mutations discard loaded older pages and keyboard focus. | Resolved locally; the initial client startup error did not recur on rerun. |
+| 161 | Message-IDs differing only by case collide and silently discard mail. | Resolved locally. |
+| 160 | Migration journal entry 0026 has no SQL migration or snapshot. | Resolved locally. |
+| 159 | Catch-all backups can restore a different zone's routing configuration. | Resolved locally; remote routing unverified. |
+| 158 | Catch-all backups can save NextMail's own rule as its predecessor. | Resolved locally; remote routing unverified. |
+| 157 | Repeated migrations re-grant intentionally revoked default roles. | Resolved locally. |
+| 156 | Snapshot cleanup follows linked roots and can delete external files. | Resolved locally. |
+| 155 | Dummy password initialization starts disallowed module-scope cryptography. | Resolved locally. |
+| 154 | Concurrent mailbox creations can exceed the active mailbox cap. | Resolved locally. |
+| 153 | Invalid MAX_EMAILS values can disable or block mailbox creation limits. | Resolved locally; production behavior unverified. |
+| 151 | Isolated browser runs can lose client-session or refresh interactivity. | Resolved locally; production behavior unverified. |
+| 150 | Committed loop regressions depend on unstaged user changes. | Resolved locally. |
+| 149 | Cleanup runs an unbounded delete loop and can exceed the D1 query limit. | Resolved locally; production behavior unverified. |
+| 148 | Inbound mail has no idempotency key, so a redelivery is stored twice. | Resolved locally; live delivery unverified. |
+| 147 | The inbound email worker blocks on webhook delivery for up to about half a minute. | Resolved locally; production behaviour unverified. |
+| 146 | Duplicate webhook rows per user are possible and are read without ordering. | Resolved locally; production migration unverified. |
+| 145 | Share links and API keys are never pruned, and share listings are unbounded. | Resolved locally. |
+| 144 | The Catch-all lookup scans the whole mailbox table on every unknown recipient. | Resolved locally. |
+| 143 | Deleted accounts keep a valid session cookie until it expires. | Resolved locally. |
+| 142 | Unknown usernames answer faster than known ones. | Resolved locally; production timing unverified. |
+| 141 | The deploy overwrites the zone Catch-all without recording the previous rule. | Resolved locally; remote routing unverified. |
+| 140 | The message retry action reloads the whole application. | Resolved locally. |
+| 139 | Deleting a message moves keyboard focus to the document body. | Resolved locally. |
+| 138 | The shared mailbox page keeps polling while the tab is hidden. | Resolved locally. |
+| 137 | Application .env credentials ship in plaintext inside the deployed Worker bundle. | Resolved locally; live deployment remains unverified. |
+| 136 | The deploy can bind the Worker to a foreign D1 database or KV namespace. | Resolved locally; deployment not re-verified. |
+| 135 | Admin user lists accept an invalid page and fail with a server error. | Resolved locally. |
+| 134 | Malformed request bodies produce server errors instead of invalid-input responses. | Resolved locally. |
+| 133 | The webhook configuration endpoint returns the signing secret. | Resolved locally: the response omits the secret and is not cacheable. |
+| 132 | Share expiry options and dialog errors show the wrong language or raw errors. | Resolved locally: expiry labels are localized, list and create failures differ, and icon buttons are named. |
+| 131 | Icon-only controls in the profile and shared pages have no accessible name. | Resolved locally: named controls pass bilingual keyboard checks. |
+| 130 | Retired Pages hostnames remain in the interface, canonical links, and documentation. | Resolved locally: hosts derive from the deployment and the README points at the Worker. |
+| 129 | The session callback silently re-grants a default role to accounts without one. | Resolved locally: session lookups preserve role revocations and the one-time upgrade backfill passes local checks. |
+| 128 | API-key load and toggle failures incorrectly report creation failures. | Resolved locally: operation-specific feedback passes bilingual browser checks; production behavior unverified. |
+| 127 | API-key switches and delete controls have no accessible names. | Resolved locally: key-specific bilingual labels pass keyboard and browser checks. |
+| 126 | Pending API-key row actions permit overlapping changes. | Resolved locally: per-key locking and failure recovery pass browser checks; production concurrency unverified. |
+| 125 | Stale list refreshes visually undo API-key toggles and deletions. | Resolved locally: both races reproduce before the fix and pass afterward; production behavior unverified. |
+| 124 | A delayed API-key list refresh can hide a newer creation. | Resolved locally: overlapping refresh checks retain new records; production behavior unverified. |
+| 123 | API-key dialog dismissal retains sensitive state and allows obsolete requests to affect reopened forms. | Resolved locally: all close paths and delayed-response checks pass in both locales; production behavior unverified. |
+| 122 | API-key creation error text has insufficient contrast in dark mode. | Resolved locally: error text passes light/dark contrast and browser checks. |
+| 121 | API-key dialog actions touch when stacked on mobile. | Resolved locally: spacing passes bilingual desktop/mobile browser checks. |
+| 120 | Duplicate API-key names return server errors and close the creation dialog. | Resolved locally: API and bilingual desktop/mobile retry checks pass; production behavior unverified. |
+| 119 | Malformed page and polling cursors produce server errors or restart polling. | Resolved locally: validation and legacy polling regressions pass; remote behavior unverified. |
+| 118 | Failed mailbox deletion can erase messages and message-share links while leaving the mailbox. | Resolved locally: atomic cascade and failure-preservation regressions pass; remote behavior unverified. |
+| 117 | Shared mailbox summary queries load and discard full message bodies. | Resolved locally: body fields are excluded; summary and pagination regressions pass. |
+| 116 | Public mailbox endpoints expose data at the exact share or mailbox expiry timestamp. | Resolved locally: all mailbox endpoints reject the expiry boundary; remote behavior unverified. |
+| 115 | Malformed API-key mutation bodies can change key enablement or return server errors. | Resolved locally: strict input validation passes route regressions; remote behavior unverified. |
+| 114 | Invalid share expiry values can create permanent links or fail as server errors. | Resolved locally: expiry validation passes route regressions; remote behavior unverified. |
 | 113 | Deployment probes mistake Cloudflare detection scripts in successful HTML for a blocking challenge. | Resolved: corrected probes pass regression checks and the full production deployment. |
 | 112 | Deployment does not configure project-scoped WAF exceptions for OpenAPI and browser verification. | Resolved: project rules are deployed; live API and front-end probes pass with rate limits preserved. |
 | 111 | Catch-all configuration conflates collection and visibility after disabling it. | Resolved: separate collection and visibility controls pass local saved-flag checks and live bilingual desktop/mobile checks. |
@@ -99,11 +160,11 @@ Newest findings appear first. Each row records only the issue and current dispos
 | 21 | UI permission condition was incorrect. | Resolved. |
 | 20 | Cleanup throughput was limited to 100 emails per hour. | Resolved. |
 | 19 | Untrusted email HTML was rendered without sanitization. | Resolved. |
-| 18 | API keys are stored in plaintext. | Open; user requested keeping this for development convenience. |
+| 18 | API keys are stored in plaintext. | Accepted by user: kept for development convenience; the user also accepts plaintext display in the owner's authorized management panel. |
 | 17 | PWA cache retained private responses after logout. | Resolved. |
 | 16 | Concurrent case variants could create conflicting email owners. | Resolved. |
 | 15 | Risky OAuth account linking was enabled. | Resolved. |
-| 14 | Dependency audit failed. | Partially resolved: production audit is clean after patches and Tailwind 4 migration; five lint-tool packages retain one unpatched braces advisory. |
+| 14 | Dependency audit failed. | Partially resolved: production dependencies audit clean; deployment-tool dependencies retain advisories. |
 | 13 | GitHub Actions deployment configuration was insecure. | Resolved. |
 | 12 | Deployment could report success when a Worker failed. | Resolved. |
 | 11 | Deleting sent messages reset daily send usage. | Resolved. |

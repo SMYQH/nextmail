@@ -3,7 +3,7 @@ import { createDb } from "@/lib/db"
 import { emailShares, messages } from "@/lib/schema"
 import { eq, and, lt, or, sql, ne, isNull } from "drizzle-orm"
 import { NextResponse } from "next/server"
-import { encodeCursor, decodeCursor } from "@/lib/cursor"
+import { encodeCursor, decodeCursor, InvalidCursorError } from "@/lib/cursor"
 
 
 const PAGE_SIZE = 20
@@ -35,7 +35,7 @@ export async function GET(
     }
 
     // 检查分享是否过期
-    if (share.expiresAt && share.expiresAt < new Date()) {
+    if (share.expiresAt && share.expiresAt <= new Date()) {
       return NextResponse.json(
         { error: "Share link has expired" },
         { status: 410 }
@@ -43,7 +43,7 @@ export async function GET(
     }
 
     // 检查邮箱是否过期
-    if (share.email.expiresAt < new Date()) {
+    if (share.email.expiresAt <= new Date()) {
       return NextResponse.json(
         { error: "Email has expired" },
         { status: 410 }
@@ -84,6 +84,7 @@ export async function GET(
     }
 
     const results = await db.query.messages.findMany({
+      columns: { content: false, html: false },
       where: and(...conditions),
       orderBy: (messages, { desc }) => [
         desc(messages.receivedAt),
@@ -114,6 +115,9 @@ export async function GET(
       total: totalCount
     })
   } catch (error) {
+    if (error instanceof InvalidCursorError) {
+      return NextResponse.json({ error: error.message }, { status: 400 })
+    }
     console.error("Failed to fetch shared messages:", safeErrorMetadata(error))
     return NextResponse.json(
       { error: "Failed to fetch messages" },

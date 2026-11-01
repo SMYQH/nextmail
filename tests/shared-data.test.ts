@@ -41,6 +41,20 @@ test("mailbox shares expose only received messages from the shared mailbox", asy
   assert.equal(detail?.emailAddress, "shared@example.com")
 })
 
+test("shared mailbox summaries do not load message bodies from the database", async t => {
+  const queries: string[] = []
+  const originalPrepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (sql: string) => {
+    if (sql.toLowerCase().includes('from "message"')) queries.push(sql)
+    return originalPrepare(sql)
+  })
+  const result = await getSharedEmailMessages("mailbox-token")
+  assert.equal(result.total, 3)
+  assert.deepEqual(result.messages.map(message => message.id), ["received-b", "received-a", "legacy"])
+  assert.ok(queries.length > 0)
+  for (const sql of queries) assert.doesNotMatch(sql, /"(?:content|html)"/)
+})
+
 test("shared message pagination uses a stable timestamp and ID tie-breaker", async () => {
   const result = await getSharedEmailMessages("mailbox-token", 1)
   assert.equal(result.total, 3)

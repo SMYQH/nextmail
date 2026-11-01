@@ -35,7 +35,7 @@ mock.module("@opennextjs/cloudflare", { namedExports: { getCloudflareContext: ()
 const { GET, POST, register, hasEmperor, assignRoleToUser, findOrCreateRole } = await import("../app/lib/auth")
 const { CredentialsError } = await import("../app/lib/credentials-error")
 const registration = await import("../app/api/auth/register/route")
-const { middleware } = await import("../middleware")
+const { proxy } = await import("../proxy")
 
 beforeEach(t => {
   assert.ok("mock" in t)
@@ -58,7 +58,7 @@ function pauseDefaultRoleLookup() {
   return { started: startedPromise, release }
 }
 
-test("middleware authenticates HTTP and HTTPS session cookies with the request protocol", async () => {
+test("proxy authenticates HTTP and HTTPS session cookies with the request protocol", async () => {
   sqlite.exec("INSERT INTO user(id,username) VALUES('preview-user','preview'); INSERT INTO role(id,name) VALUES('duke','duke'); INSERT INTO user_role(user_id,role_id) VALUES('preview-user','duke')")
   for (const protocol of ["http", "https"]) {
     const cookieName = protocol === "https" ? "__Secure-authjs.session-token" : "authjs.session-token"
@@ -73,7 +73,7 @@ test("middleware authenticates HTTP and HTTPS session cookies with the request p
       ["/en/profile", "GET"],
       ["/zh-CN/profile", "GET"],
     ]) {
-      const response = await middleware(new Request(`${protocol}://localhost:8787${route}`, {
+      const response = await proxy(new Request(`${protocol}://localhost:8787${route}`, {
         method,
         headers: { cookie },
       }))
@@ -81,12 +81,12 @@ test("middleware authenticates HTTP and HTTPS session cookies with the request p
       assert.equal(response.headers.get("x-middleware-request-x-forwarded-proto"), protocol)
       assert.equal(response.headers.get("x-middleware-request-cookie"), cookie)
     }
-    const unauthorized = await middleware(new Request(`${protocol}://localhost:8787/api/config`))
+    const unauthorized = await proxy(new Request(`${protocol}://localhost:8787/api/config`))
     assert.equal(unauthorized.status, 401)
   }
 })
 
-test("middleware resolves a session once per request and observes role revocation on the next request", async t => {
+test("proxy resolves a session once per request and observes role revocation on the next request", async t => {
   sqlite.exec("INSERT INTO user(id,username) VALUES('preview-user','preview'); INSERT INTO role(id,name) VALUES('duke','duke'),('civilian','civilian'); INSERT INTO user_role(user_id,role_id) VALUES('preview-user','duke')")
   const cookieName = "__Secure-authjs.session-token"
   const token = await encode({ token: { id: "preview-user", name: "preview" }, secret: process.env.AUTH_SECRET!, salt: cookieName })
@@ -97,17 +97,17 @@ test("middleware resolves a session once per request and observes role revocatio
     return prepare(sql)
   })
   const request = () => new Request("https://app.example.com/api/emails", { headers: { cookie: `${cookieName}=${token}` } })
-  assert.equal((await middleware(request())).headers.get("x-middleware-next"), "1")
+  assert.equal((await proxy(request())).headers.get("x-middleware-next"), "1")
   assert.equal(queries.filter(sql => sql.includes('from "account"')).length, 1)
   assert.equal(queries.filter(sql => sql.includes('from "user_role"')).length, 2)
 
   sqlite.exec("UPDATE user_role SET role_id='civilian' WHERE user_id='preview-user'")
   queries.length = 0
-  assert.equal((await middleware(request())).status, 403)
+  assert.equal((await proxy(request())).status, 403)
   assert.equal(queries.filter(sql => sql.includes('from "account"')).length, 1)
 })
 
-test("middleware looks up an API key once and does not cache revoked permissions", async t => {
+test("proxy looks up an API key once and does not cache revoked permissions", async t => {
   sqlite.exec("INSERT INTO user(id) VALUES('api-user'); INSERT INTO role(id,name) VALUES('duke','duke'),('knight','knight'); INSERT INTO user_role(user_id,role_id) VALUES('api-user','duke')")
   sqlite.prepare("INSERT INTO api_keys(id,user_id,key,name,enabled,created_at,expires_at) VALUES('key','api-user','test-key','Test',1,?,?)").run(Date.now(), Date.now() + 60_000)
   const queries: string[] = []
@@ -117,22 +117,22 @@ test("middleware looks up an API key once and does not cache revoked permissions
     return prepare(sql)
   })
   const request = () => new Request("https://app.example.com/api/emails", { headers: { "X-API-Key": "test-key" } })
-  assert.equal((await middleware(request())).headers.get("x-middleware-next"), "1")
+  assert.equal((await proxy(request())).headers.get("x-middleware-next"), "1")
   assert.equal(queries.filter(sql => sql.includes('from "api_keys"')).length, 1)
   assert.equal(queries.filter(sql => sql.includes('from "user_role"')).length, 1)
 
   sqlite.exec("UPDATE user_role SET role_id='knight' WHERE user_id='api-user'")
   queries.length = 0
-  assert.equal((await middleware(request())).status, 401)
+  assert.equal((await proxy(request())).status, 401)
   assert.equal(queries.filter(sql => sql.includes('from "api_keys"')).length, 1)
 })
 
 test("emperor browser navigation is allowed but claims still require authentication", async () => {
   const url = "https://app.example.com/api/roles/init-emperor"
-  const navigation = await middleware(new Request(url))
+  const navigation = await proxy(new Request(url))
   assert.equal(navigation.headers.get("x-middleware-next"), "1")
-  assert.equal((await middleware(new Request(url, { method: "POST" }))).status, 401)
-  assert.equal((await middleware(new Request(`${url}/other`))).status, 401)
+  assert.equal((await proxy(new Request(url, { method: "POST" }))).status, 401)
+  assert.equal((await proxy(new Request(`${url}/other`))).status, 401)
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user_role").get()?.n, 0)
   assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user").get()?.n, 0)
 })
@@ -167,7 +167,7 @@ test("first sign-in preserves an administrator role assigned during default-role
   assert.equal(persistedRole?.name, ROLES.KNIGHT)
 })
 
-test("session initialization returns the role persisted during default-role lookup", async () => {
+test("session initialization returns the persisted role without granting one", async () => {
   config.set("DEFAULT_ROLE", ROLES.DUKE)
   sqlite.exec("INSERT INTO user(id,username) VALUES('session-race-user','session-race')")
   const cookieName = "__Secure-authjs.session-token"
@@ -176,17 +176,12 @@ test("session initialization returns the role persisted during default-role look
     secret: process.env.AUTH_SECRET!,
     salt: cookieName,
   })
-  const barrier = pauseDefaultRoleLookup()
-  const sessionRequest = GET(new NextRequest("https://app.example.com/api/auth/session", {
-    headers: { cookie: `${cookieName}=${token}` },
-  }))
-  await barrier.started
-
   const knight = await findOrCreateRole(db, ROLES.KNIGHT)
   await assignRoleToUser(db, "session-race-user", knight.id)
-  barrier.release()
 
-  const response = await sessionRequest
+  const response = await GET(new NextRequest("https://app.example.com/api/auth/session", {
+    headers: { cookie: `${cookieName}=${token}` },
+  }))
   assert.equal(response.status, 200)
   const session = await response.json() as { user: { roles: { name: string }[] } }
   assert.deepEqual(session.user.roles.map(role => role.name), [ROLES.KNIGHT])
@@ -194,6 +189,8 @@ test("session initialization returns the role persisted during default-role look
     sqlite.prepare("SELECT r.name FROM user_role ur JOIN role r ON r.id = ur.role_id WHERE ur.user_id = 'session-race-user'").all().map(row => row.name),
     [ROLES.KNIGHT],
   )
+  // The session callback resolves roles read-only, so it never writes a role row.
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user_role WHERE user_id = 'session-race-user'").get()?.n, 1)
 })
 
 test("explicit role assignment still replaces the user's previous role", async () => {
@@ -313,7 +310,7 @@ test("Auth.js configuration initialization failures are logged and rethrown safe
   assert.doesNotMatch(output, new RegExp(marker))
 })
 
-test("middleware propagates identity database failures without logging API keys", async t => {
+test("proxy propagates identity database failures without logging API keys", async t => {
   const apiKey = "apiKeyMarker42"
   const driverMessage = "driverMarker43"
   const failure = new DrizzleQueryError(
@@ -332,7 +329,7 @@ test("middleware propagates identity database failures without logging API keys"
   })
 
   await assert.rejects(
-    middleware(new Request("https://app.example.com/api/config", { headers: { "X-API-Key": apiKey } })),
+    proxy(new Request("https://app.example.com/api/config", { headers: { "X-API-Key": apiKey } })),
     /Request identity lookup failed/,
   )
   const output = logs.join("\n")
@@ -367,6 +364,18 @@ test("invalid registration never creates an account", async t => {
     await t.test(JSON.stringify(input), async () => {
       const response = await registration.POST(new Request("https://app.example.com/api/auth/register", {
         method: "POST", body: JSON.stringify(input),
+      }))
+      assert.equal(response.status, 400)
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user").get()?.n, 0)
+    })
+  }
+})
+
+test("malformed registration bodies are rejected as invalid input", async t => {
+  for (const body of ["", "{", "null", "[]", '"username"']) {
+    await t.test(body || "empty body", async () => {
+      const response = await registration.POST(new Request("https://app.example.com/api/auth/register", {
+        method: "POST", body,
       }))
       assert.equal(response.status, 400)
       assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM user").get()?.n, 0)

@@ -129,12 +129,14 @@ export function WebhookConfig() {
       {setupError && <p role="alert" className="text-sm text-destructive">{errorMessage(setupError, "saveFailed")}</p>}
       <div className="flex items-center justify-between">
         <div className="space-y-0.5">
-          <Label>{t("enable")}</Label>
+          <Label htmlFor="webhook-enabled">{t("enable")}</Label>
           <div className="text-sm text-muted-foreground">
             {t("description")}
           </div>
         </div>
         <Switch
+          id="webhook-enabled"
+          aria-label={t("enable")}
           checked={enabled}
           onCheckedChange={setEnabled}
         />
@@ -153,12 +155,9 @@ export function WebhookConfig() {
                 type="url"
                 required
               />
-              <Button type="submit" disabled={loading} className="shrink-0">
-                {loading ? (
-                  <Loader2 className="w-4 h-4 animate-spin" />
-                ) : (
-                  tCommon("save")
-                )}
+              <Button type="submit" disabled={loading} aria-busy={loading} className="shrink-0 gap-2">
+                <Loader2 className={`w-4 h-4 shrink-0 ${loading ? "animate-spin" : "invisible"}`} aria-hidden="true" />
+                {tCommon("save")}
               </Button>
               <TooltipProvider>
                 <Tooltip>
@@ -166,14 +165,17 @@ export function WebhookConfig() {
                     <Button
                       type="button"
                       variant="outline"
+                      aria-label={t("test")}
                       onClick={handleTest}
                       disabled={testing || !url}
+                      aria-busy={testing}
                     >
                       {testing ? (
-                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
                       ) : (
-                        <Send className="w-4 h-4" />
+                        <Send className="w-4 h-4" aria-hidden="true" />
                       )}
+                      <span className="sr-only">{t("test")}</span>
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>
@@ -210,7 +212,7 @@ export function WebhookConfig() {
                   {`{
   "emailId": "email-uuid",
   "messageId": "message-uuid",
-  "fromAddress": "sender@nextmail.pages.dev",
+  "fromAddress": "sender@example.com",
   "subject": "${t("docs.subject")}",
   "content": "${t("docs.content")}",
   "html": "${t("docs.html")}",

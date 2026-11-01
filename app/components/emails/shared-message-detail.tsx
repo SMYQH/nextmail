@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState } from "react"
 import { Loader2 } from "lucide-react"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 import { Label } from "@/components/ui/label"
@@ -38,28 +38,20 @@ interface SharedMessageDetailProps {
 
 type ViewMode = "html" | "text"
 
-export function SharedMessageDetail({
+export function SharedMessageDetail(props: SharedMessageDetailProps) {
+  return <SharedMessageDetailContent key={props.message?.id ?? "no-message"} {...props} />
+}
+
+function SharedMessageDetailContent({
   message,
   locale,
   initialTimeText,
   loading = false,
   t,
 }: SharedMessageDetailProps) {
-  const [viewMode, setViewMode] = useState<ViewMode>("html")
-  const messageId = message?.id
-  const messageHtml = message?.html
-  const messageContent = message?.content
-
-  // 如果没有HTML内容，默认显示文本
-  useEffect(() => {
-    if (!messageId) return
-
-    if (!messageHtml && messageContent) {
-      setViewMode("text")
-    } else if (messageHtml) {
-      setViewMode("html")
-    }
-  }, [messageId, messageHtml, messageContent])
+  const [viewMode, setViewMode] = useState<ViewMode>(() => (
+    message?.content && !message.html ? "text" : "html"
+  ))
 
   if (loading) {
     return (
@@ -133,7 +125,7 @@ export function SharedMessageDetail({
         {viewMode === "html" && message.html ? (
           <EmailHtml html={message.html} title={message.subject} />
         ) : message.content ? (
-          <div className="p-4 text-sm whitespace-pre-wrap">
+          <div className="p-4 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]">
             {message.content}
           </div>
         ) : (

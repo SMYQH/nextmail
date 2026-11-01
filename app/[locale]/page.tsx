@@ -20,7 +20,7 @@ export default async function Home({
 
   return (
     <div className="fluent-shell min-h-screen">
-      <div className="relative z-10 container mx-auto px-4 lg:px-8 max-w-[1600px]">
+      <div className="relative z-10 container">
         <Header />
         <main className="pt-16">
           <div className="min-h-[calc(100svh-4rem)] flex items-center py-10 sm:py-16">

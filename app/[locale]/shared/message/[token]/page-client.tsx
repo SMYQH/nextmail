@@ -39,7 +39,7 @@ export function SharedMessagePageClient({
 
   return (
     <div className="fluent-shell min-h-screen">
-      <div className="relative z-10 container mx-auto p-4 max-w-7xl">
+      <div className="relative z-10 container">
         <BrandHeader
           title={message.emailAddress || message.to_address || message.subject}
           subtitle={!message.emailExpiresAt || !Number.isFinite(new Date(message.emailExpiresAt).getTime())

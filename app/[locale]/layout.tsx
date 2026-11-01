@@ -1,12 +1,15 @@
 import { NextIntlClientProvider } from "next-intl"
 import { notFound } from "next/navigation"
+import { headers } from "next/headers"
 import { getTranslations } from "next-intl/server"
 import { i18n, type Locale } from "@/i18n/config"
 import type { Metadata, Viewport } from "next"
+import { auth } from "@/lib/auth"
 import { FloatMenu } from "@/components/float-menu"
 import { ThemeProvider } from "@/components/theme/theme-provider"
 import { Toaster } from "@/components/ui/toaster"
 import { cn } from "@/lib/utils"
+import { resolveSiteBaseUrl } from "@/lib/site-base-url"
 import "../globals.css"
 import { Providers } from "../providers"
 
@@ -41,13 +44,22 @@ export async function generateMetadata({
   const locale = localeFromParams as Locale
   const t = await getTranslations({ locale, namespace: "metadata" })
 
-  const baseUrl = process.env.NEXT_PUBLIC_BASE_URL || "https://nextmail.pages.dev"
-  
+  // Canonical and Open Graph links point at one configured public URL. The
+  // request host is only used outside production, where no public URL is set.
+  const requestHeaders = await headers()
+  const baseUrl = resolveSiteBaseUrl({
+    configured: process.env.NEXT_PUBLIC_BASE_URL,
+    isProduction: process.env.NODE_ENV === "production",
+    readHeader: (name) => requestHeaders.get(name),
+  })
+
   // Generate hreflang links for all supported locales
   const languages: Record<string, string> = {}
-  i18n.locales.forEach((loc) => {
-    languages[loc] = `${baseUrl}/${loc}`
-  })
+  if (baseUrl) {
+    i18n.locales.forEach((loc) => {
+      languages[loc] = `${baseUrl}/${loc}`
+    })
+  }
 
   return {
     title: t("title"),
@@ -67,7 +79,7 @@ export async function generateMetadata({
     openGraph: {
       type: "website",
       locale: locale === "zh-CN" ? "zh_CN" : locale,
-      url: `${baseUrl}/${locale}`,
+      ...(baseUrl ? { url: `${baseUrl}/${locale}` } : {}),
       title: t("title"),
       description: t("description"),
       siteName: "NextMail",
@@ -77,10 +89,12 @@ export async function generateMetadata({
       title: t("title"),
       description: t("description"),
     },
-    alternates: {
-      canonical: `${baseUrl}/${locale}`,
-      languages,
-    },
+    alternates: baseUrl
+      ? {
+        canonical: `${baseUrl}/${locale}`,
+        languages,
+      }
+      : undefined,
     manifest: '/manifest.json',
     icons: {
       icon: [{ url: '/icons/nextmail.svg', type: 'image/svg+xml', sizes: 'any' }],
@@ -102,7 +116,10 @@ export default async function LocaleLayout({
     notFound()
   }
 
-  const messages = await getMessages(locale)
+  const [messages, session] = await Promise.all([
+    getMessages(locale),
+    auth(),
+  ])
 
   return (
     <html lang={locale} suppressHydrationWarning>
@@ -127,7 +144,7 @@ export default async function LocaleLayout({
           disableTransitionOnChange
           storageKey="temp-mail-theme"
         >
-          <Providers>
+          <Providers session={session ?? null}>
             <NextIntlClientProvider locale={locale} messages={messages}>
               {children}
               <FloatMenu />

@@ -12,6 +12,7 @@ import { useSendPermission } from "@/hooks/use-send-permission"
 import { Copy, Inbox, MailOpen } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { useUserRole } from "@/hooks/use-user-role"
+import { EmptyState } from "@/components/ui/empty-state"
 import { ROLES } from "@/lib/permissions"
 
 interface Email {
@@ -92,7 +93,7 @@ export function ThreeColumnLayout() {
             {selectedEmail ? (
               <div className="w-full flex justify-between items-center gap-2">
                 <div className="flex flex-1 min-w-0 items-center gap-2">
-                  <h2 className={titleClass}>{selectedEmail.address}</h2>
+                  <h2 className={titleClass} title={selectedEmail.address}>{selectedEmail.address}</h2>
                   <Button type="button" variant="ghost" size="icon" aria-label={tCommon("copy")} className="h-8 w-8 shrink-0" onClick={copyEmailAddress}>
                     <Copy className="size-4" />
                   </Button>
@@ -121,10 +122,10 @@ export function ThreeColumnLayout() {
             </div>
           )}
           {!selectedEmail && (
-            <div className="fluent-empty-state">
-              <div className="fluent-mark p-4"><Inbox className="h-7 w-7 text-primary" aria-hidden="true" /></div>
-              <p className="max-w-52 leading-relaxed">{t("selectEmail")}</p>
-            </div>
+            <EmptyState
+              icon={<Inbox className="h-7 w-7 text-primary" aria-hidden="true" />}
+              message={t("selectEmail")}
+            />
           )}
         </div>
 
@@ -148,10 +149,10 @@ export function ThreeColumnLayout() {
             </div>
           )}
           {!selectedMessageId && (
-            <div className="fluent-empty-state">
-              <MailOpen className="h-12 w-12 text-muted-foreground/40" strokeWidth={1} aria-hidden="true" />
-              <p className="max-w-52 leading-relaxed">{t("selectMessage")}</p>
-            </div>
+            <EmptyState
+              icon={<MailOpen className="h-7 w-7 text-primary" aria-hidden="true" />}
+              message={t("selectMessage")}
+            />
           )}
         </div>
       </div>}
@@ -188,7 +189,7 @@ export function ThreeColumnLayout() {
                 </button>
                 <div className="flex-1 flex justify-between items-center gap-2 min-w-0">
                   <div className="flex flex-1 min-w-0 items-center gap-2">
-                    <span className="truncate min-w-0 flex-1 text-right">{selectedEmail.address}</span>
+                    <span className="truncate min-w-0 flex-1 text-right" title={selectedEmail.address}>{selectedEmail.address}</span>
                     <Button type="button" variant="ghost" size="icon" aria-label={tCommon("copy")} className="h-8 w-8 shrink-0" onClick={copyEmailAddress}>
                       <Copy className="size-4" />
                     </Button>

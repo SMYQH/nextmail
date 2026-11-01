@@ -32,9 +32,8 @@ yarn-error.log*
 # local environment files
 .env
 .env.*
-!.env.example
 !.env.deploy.example
-.dev.vars
+.dev.vars*
 
 # vercel
 .vercel
@@ -44,14 +43,15 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-.wrangler
-wrangler.toml
-wrangler.email.toml
-wrangler.cleanup.toml
+.wrangler/
+wrangler.json
+wrangler.email.json
+wrangler.cleanup.json
 
 public/workbox-*.js
 
-/playwright-report/
-/test-results/
 /.shannon/
 /tmp/
+/.agent/
+/.test/
+.tmp-*.log

@@ -9,6 +9,7 @@ import { useRouter } from 'next/navigation'
 import { useTranslations, useLocale } from "next-intl"
 import Link from "next/link"
 import { cn } from "@/lib/utils"
+import { useHydrated } from "@/hooks/use-hydrated"
 
 interface SignButtonProps {
   size?: "default" | "lg"
@@ -20,8 +21,12 @@ export function SignButton({ size = "default" }: SignButtonProps) {
   const { data: session, status } = useSession()
   const t = useTranslations("auth.signButton")
   const loading = status === "loading"
+  // The session is rendered on the server, so the signed-in control would be
+  // part of the static HTML. Show it only once the client took over: a page
+  // that never hydrates must not offer a sign-out control it cannot run.
+  const hydrated = useHydrated()
 
-  if (loading) {
+  if (!hydrated || loading) {
     return <div className="h-9" />
   }
 

@@ -1,6 +1,7 @@
 "use client"
 
-import { useCallback, useState } from "react"
+import { useCallback, useId, useState } from "react"
+import { useRouter } from "next/navigation"
 import { signIn } from "next-auth/react"
 import { useTranslations } from "next-intl"
 import { useToast } from "@/components/ui/use-toast"
@@ -42,6 +43,7 @@ interface FormErrors {
 }
 
 export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
+  const router = useRouter()
   const [username, setUsername] = useState("")
   const [password, setPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
@@ -50,6 +52,10 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
   const [turnstileToken, setTurnstileToken] = useState("")
   const [turnstileResetCounter, setTurnstileResetCounter] = useState(0)
   const [activeTab, setActiveTab] = useState<"login" | "register">("login")
+  const formId = useId()
+  const usernameErrorId = `${formId}-${activeTab}-username-error`
+  const passwordErrorId = `${formId}-${activeTab}-password-error`
+  const confirmPasswordErrorId = `${formId}-${activeTab}-confirm-password-error`
   const { toast } = useToast()
   const t = useTranslations("auth.loginForm")
 
@@ -132,7 +138,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
         return
       }
 
-      window.location.href = "/"
+      router.push("/")
+      router.refresh()
     } catch {
       toast({
         title: t("toast.loginFailed"),
@@ -172,7 +179,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
         return
       }
 
-      window.location.href = "/"
+      router.push("/")
+      router.refresh()
     } catch {
       toast({
         title: t("toast.registerFailed"),
@@ -222,6 +230,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                         errors.username && "border-destructive focus-visible:ring-destructive"
                       )}
                       placeholder={t("fields.username")}
+                      aria-invalid={errors.username ? true : undefined}
+                      aria-describedby={errors.username ? usernameErrorId : undefined}
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value)
@@ -231,7 +241,7 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                     />
                   </div>
                   {errors.username && (
-                    <p className="text-xs text-destructive">{errors.username}</p>
+                    <p id={usernameErrorId} role="alert" className="text-xs text-destructive">{errors.username}</p>
                   )}
                 </div>
                 <div className="space-y-1.5">
@@ -246,6 +256,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                       )}
                       type="password"
                       placeholder={t("fields.password")}
+                      aria-invalid={errors.password ? true : undefined}
+                      aria-describedby={errors.password ? passwordErrorId : undefined}
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value)
@@ -255,7 +267,7 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                     />
                   </div>
                   {errors.password && (
-                    <p className="text-xs text-destructive">{errors.password}</p>
+                    <p id={passwordErrorId} role="alert" className="text-xs text-destructive">{errors.password}</p>
                   )}
                 </div>
               </div>
@@ -338,6 +350,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                         errors.username && "border-destructive focus-visible:ring-destructive"
                       )}
                       placeholder={t("fields.username")}
+                      aria-invalid={errors.username ? true : undefined}
+                      aria-describedby={errors.username ? usernameErrorId : undefined}
                       value={username}
                       onChange={(e) => {
                         setUsername(e.target.value)
@@ -347,7 +361,7 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                     />
                   </div>
                   {errors.username && (
-                    <p className="text-xs text-destructive">{errors.username}</p>
+                    <p id={usernameErrorId} role="alert" className="text-xs text-destructive">{errors.username}</p>
                   )}
                 </div>
                 <div className="space-y-1.5">
@@ -362,6 +376,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                       )}
                       type="password"
                       placeholder={t("fields.password")}
+                      aria-invalid={errors.password ? true : undefined}
+                      aria-describedby={errors.password ? passwordErrorId : undefined}
                       value={password}
                       onChange={(e) => {
                         setPassword(e.target.value)
@@ -371,7 +387,7 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                     />
                   </div>
                   {errors.password && (
-                    <p className="text-xs text-destructive">{errors.password}</p>
+                    <p id={passwordErrorId} role="alert" className="text-xs text-destructive">{errors.password}</p>
                   )}
                 </div>
                 <div className="space-y-1.5">
@@ -386,6 +402,8 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                       )}
                       type="password"
                       placeholder={t("fields.confirmPassword")}
+                      aria-invalid={errors.confirmPassword ? true : undefined}
+                      aria-describedby={errors.confirmPassword ? confirmPasswordErrorId : undefined}
                       value={confirmPassword}
                       onChange={(e) => {
                         setConfirmPassword(e.target.value)
@@ -395,7 +413,7 @@ export function LoginForm({ oauthProviders, turnstile }: LoginFormProps) {
                     />
                   </div>
                   {errors.confirmPassword && (
-                    <p className="text-xs text-destructive">{errors.confirmPassword}</p>
+                    <p id={confirmPasswordErrorId} role="alert" className="text-xs text-destructive">{errors.confirmPassword}</p>
                   )}
                 </div>
               </div>

@@ -30,7 +30,7 @@ export async function GET(
     }
 
     // 检查分享是否过期
-    if (share.expiresAt && share.expiresAt < new Date()) {
+    if (share.expiresAt && share.expiresAt <= new Date()) {
       return NextResponse.json(
         { error: "Share link has expired" },
         { status: 410 }
@@ -38,7 +38,7 @@ export async function GET(
     }
 
     // 检查邮箱是否过期
-    if (share.email.expiresAt < new Date()) {
+    if (share.email.expiresAt <= new Date()) {
       return NextResponse.json(
         { error: "Email has expired" },
         { status: 410 }

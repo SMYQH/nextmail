@@ -27,7 +27,7 @@ export function BrandHeader({
     <div className="text-center space-y-4 lg:pb-4">
       <div className="flex justify-center pt-2">
         <Link
-          href="https://nextmail.pages.dev"
+          href="/"
           className="flex items-center gap-3 rounded-md hover:opacity-80 transition-opacity group"
         >
           <BrandIcon

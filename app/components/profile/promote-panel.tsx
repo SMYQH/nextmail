@@ -10,6 +10,7 @@ import { useToast } from "@/components/ui/use-toast"
 import { ROLES, Role } from "@/lib/permissions"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Label } from "@/components/ui/label"
+import { EmptyState } from "@/components/ui/empty-state"
 import { useConfig } from "@/hooks/use-config"
 import {
   Select,
@@ -83,24 +84,28 @@ export function PromotePanel() {
 
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
+  const requestUsers = useCallback(async (requestedPage: number, requestedSearch: string) => {
+    const params = new URLSearchParams({
+      page: requestedPage.toString(),
+      pageSize: PAGE_SIZE.toString(),
+    })
+    if (requestedSearch.trim()) {
+      params.set("search", requestedSearch.trim())
+    }
+    const res = await fetch(`/api/roles/users?${params}`)
+    if (!res.ok) throw new Error("Failed to fetch")
+    return await res.json() as {
+      users: UserItem[]
+      total: number
+      page: number
+      pageSize: number
+    }
+  }, [])
+
   const fetchUsers = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({
-        page: page.toString(),
-        pageSize: PAGE_SIZE.toString(),
-      })
-      if (search.trim()) {
-        params.set("search", search.trim())
-      }
-      const res = await fetch(`/api/roles/users?${params}`)
-      if (!res.ok) throw new Error("Failed to fetch")
-      const data = await res.json() as {
-        users: UserItem[]
-        total: number
-        page: number
-        pageSize: number
-      }
+      const data = await requestUsers(page, search)
       setUsers(data.users)
       setTotal(data.total)
     } catch {
@@ -111,15 +116,38 @@ export function PromotePanel() {
     } finally {
       setLoading(false)
     }
-  }, [page, search, t, toast])
+  }, [page, requestUsers, search, t, toast])
 
   useEffect(() => {
-    fetchUsers()
-  }, [fetchUsers])
+    let active = true
+    void requestUsers(page, search)
+      .then(data => {
+        if (!active) return
+        setUsers(data.users)
+        setTotal(data.total)
+      })
+      .catch(() => {
+        if (active) {
+          toast({
+            title: t("updateFailed"),
+            variant: "destructive",
+          })
+        }
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
 
-  useEffect(() => {
+    return () => {
+      active = false
+    }
+  }, [page, requestUsers, search, t, toast])
+
+  const handleSearchChange = (value: string) => {
+    setLoading(true)
     setPage(1)
-  }, [search])
+    setSearch(value)
+  }
 
   const handleRoleChange = async (userId: string, newRole: RoleWithoutEmperor) => {
     setUpdatingUserId(userId)
@@ -211,6 +239,7 @@ export function PromotePanel() {
       setUserToDelete(null)
       // 若删除的是当前页最后一条，且不在首页，则退回上一页（useEffect 会重新拉取）
       if (users.length === 1 && page > 1) {
+        setLoading(true)
         setPage((p) => p - 1)
       } else {
         await fetchUsers()
@@ -240,7 +269,7 @@ export function PromotePanel() {
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
         <Input
           value={search}
-          onChange={(e) => setSearch(e.target.value)}
+          onChange={(e) => handleSearchChange(e.target.value)}
           placeholder={t("searchPlaceholder")}
           className="pl-9"
         />
@@ -252,9 +281,7 @@ export function PromotePanel() {
           <span className="ml-2 text-muted-foreground">{t("loading")}</span>
         </div>
       ) : users.length === 0 ? (
-        <div className="text-center py-12 text-muted-foreground">
-          {t("noUsers")}
-        </div>
+        <EmptyState message={t("noUsers")} />
       ) : (
         <>
           <div className="space-y-2">
@@ -291,16 +318,16 @@ export function PromotePanel() {
                     )}
 
                     <div className="flex-1 min-w-0">
-                      <div className="font-medium text-sm truncate">
+                      <div className="font-medium text-sm truncate" title={user.name || user.username || "—"}>
                         {user.name || user.username || "—"}
                       </div>
-                      <div className="text-xs text-muted-foreground truncate">
+                      <div className="text-xs text-muted-foreground truncate" title={user.email || user.username || "—"}>
                         {user.email || user.username || "—"}
                       </div>
                     </div>
 
                     {isEmperor ? (
-                      <div className="flex items-center gap-1.5 text-sm text-amber-600 font-medium px-3">
+                      <div className="flex items-center gap-1.5 text-sm text-warning font-medium px-3">
                         <Crown className="w-4 h-4" />
                         {roleNames[ROLES.EMPEROR]}
                       </div>
@@ -382,8 +409,11 @@ export function PromotePanel() {
                             size="sm"
                             onClick={() => saveDomainAccess(user.id, allowedDomains ?? null)}
                             disabled={!domainAccessChanged || isSavingDomains || configLoading || !config}
+                            aria-busy={isSavingDomains}
+                            className="gap-2"
                           >
-                            {isSavingDomains ? <Loader2 className="w-4 h-4 animate-spin" /> : t("saveDomains")}
+                            <Loader2 className={`w-4 h-4 shrink-0 ${isSavingDomains ? "animate-spin" : "invisible"}`} aria-hidden="true" />
+                            {t("saveDomains")}
                           </Button>
                         </div>
                       </div>
@@ -430,7 +460,10 @@ export function PromotePanel() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                onClick={() => {
+                  setLoading(true)
+                  setPage((p) => Math.max(1, p - 1))
+                }}
                 disabled={page <= 1}
               >
                 <ChevronLeft className="w-4 h-4 mr-1" />
@@ -442,7 +475,10 @@ export function PromotePanel() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                onClick={() => {
+                  setLoading(true)
+                  setPage((p) => Math.min(totalPages, p + 1))
+                }}
                 disabled={page >= totalPages}
               >
                 {t("nextPage")}
@@ -477,18 +513,16 @@ export function PromotePanel() {
               {t("cancel")}
             </AlertDialogCancel>
             <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              className="gap-2 bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={!!deletingUserId}
+              aria-busy={!!deletingUserId}
               onClick={(e) => {
                 e.preventDefault()
                 if (userToDelete) handleDelete(userToDelete)
               }}
             >
-              {deletingUserId ? (
-                <Loader2 className="w-4 h-4 animate-spin" />
-              ) : (
-                t("deleteConfirmButton")
-              )}
+              <Loader2 className={`w-4 h-4 shrink-0 ${deletingUserId ? "animate-spin" : "invisible"}`} aria-hidden="true" />
+              {t("deleteConfirmButton")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

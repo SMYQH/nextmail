@@ -154,6 +154,8 @@ export function SharedEmailPageClient({
   const startPolling = () => {
     stopPolling()
     pollTimeoutRef.current = setInterval(() => {
+      // A hidden tab does not need new mail; skip the request until it is visible again.
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return
       void fetchMessages(undefined, "poll")
     }, EMAIL_CONFIG.POLL_INTERVAL)
   }
@@ -232,7 +234,7 @@ export function SharedEmailPageClient({
 
   return (
     <div className="fluent-shell min-h-screen">
-      <div className="relative z-10 container mx-auto p-4 max-w-7xl">
+      <div className="relative z-10 container">
         <BrandHeader
           title={email.address}
           subtitle={(() => {

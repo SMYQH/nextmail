@@ -1,7 +1,9 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
-import { useTranslations } from "next-intl"
+import { useState, useEffect, useEffectEvent, useCallback, useRef } from "react"
+import { useLocale, useTranslations } from "next-intl"
+import { SharedDateTime } from "./shared-date-time"
+import { EmptyState } from "@/components/ui/empty-state"
 import {Mail, Calendar, RefreshCw, Trash2, Share2} from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
@@ -46,6 +48,9 @@ interface MessageListProps {
   refreshTrigger?: number
 }
 
+/** Where the keyboard focus goes after the deleted row left the list. */
+type MessageFocusTarget = { kind: "message"; id: string } | { kind: "refresh" }
+
 interface MessageResponse {
   messages: Message[]
   nextCursor: string | null
@@ -55,13 +60,41 @@ interface MessageResponse {
   unread?: number
 }
 
-export function MessageList({ email, messageType, onMessageSelect, selectedMessageId, refreshTrigger }: MessageListProps) {
+async function requestMessagePage(
+  emailId: string,
+  messageType: "received" | "sent",
+  signal: AbortSignal,
+  cursor?: string,
+  since?: string,
+): Promise<MessageResponse | null> {
+  const url = new URL(`/api/emails/${emailId}`, window.location.origin)
+  if (messageType === "sent") url.searchParams.set("type", "sent")
+  if (cursor) url.searchParams.set("cursor", cursor)
+  if (since) url.searchParams.set("since", since)
+
+  const response = await fetch(url, { signal })
+  if (!response.ok) return null
+  return await response.json() as MessageResponse
+}
+
+export function MessageList(props: MessageListProps) {
+  const mailboxKey = JSON.stringify([props.email.id, props.messageType])
+  return <MessageListSession key={mailboxKey} {...props} />
+}
+
+function MessageListSession({ email, messageType, onMessageSelect, selectedMessageId, refreshTrigger }: MessageListProps) {
+  const locale = useLocale()
   const t = useTranslations("emails.messages")
   const tList = useTranslations("emails.list")
   const tCommon = useTranslations("common.actions")
   const [messages, setMessages] = useState<Message[]>([])
   const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
+  const [manualRefreshing, setManualRefreshing] = useState(false)
+  const [completedRefreshTrigger, setCompletedRefreshTrigger] = useState(0)
+  const latestRefreshTriggerRef = useRef(refreshTrigger)
+  const refreshing = manualRefreshing || Boolean(
+    refreshTrigger && refreshTrigger > 0 && refreshTrigger !== completedRefreshTrigger,
+  )
   const [nextCursor, setNextCursor] = useState<string | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
   const nextCursorRef = useRef<string | null>(null)
@@ -72,6 +105,9 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
   const activeRequestRef = useRef<AbortController | null>(null)
   const [total, setTotal] = useState(0)
   const [messageToDelete, setMessageToDelete] = useState<Message | null>(null)
+  const messageButtonRefs = useRef(new Map<string, HTMLButtonElement>())
+  const refreshButtonRef = useRef<HTMLButtonElement>(null)
+  const restoreFocusRef = useRef<MessageFocusTarget | null>(null)
   const { toast } = useToast()
 
   // 当 messages 改变时更新 ref
@@ -79,7 +115,7 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     messagesRef.current = messages
   }, [messages])
 
-  type FetchKind = "initial" | "poll" | "refresh" | "more"
+  type FetchKind = "poll" | "refresh" | "more"
 
   const replaceMessages = (nextMessages: Message[]) => {
     messagesRef.current = nextMessages
@@ -99,7 +135,10 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     ) - ((messageType === 'sent' ? a.sent_at : a.received_at) || 0) || b.id.localeCompare(a.id))
   }
 
-  const fetchMessages = async (cursor?: string, kind: FetchKind = cursor ? "more" : "poll") => {
+  const fetchMessages = async (
+    cursor?: string,
+    kind: FetchKind = cursor ? "more" : "poll",
+  ) => {
     if (kind === "poll" && (activeRequestRef.current || document.visibilityState === "hidden")) return
 
     const scope = `mailbox:${email.id}:${messageType}`
@@ -115,32 +154,14 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     const controller = new AbortController()
     activeRequestRef.current = controller
 
-    if (kind === "initial") setLoading(true)
-    if (kind === "refresh") {
-      setRefreshing(true)
-      setLoadingMore(false)
-    }
-    if (kind === "more") {
-      setLoadingMore(true)
-      setRefreshing(false)
-    }
-
     try {
-      const url = new URL(`/api/emails/${email.id}`, window.location.origin)
-      if (messageType === 'sent') {
-        url.searchParams.set('type', 'sent')
-      }
-      if (cursor) {
-        url.searchParams.set('cursor', cursor)
-      }
       const incremental = kind === "poll" && latestCursorRef.current
-      if (incremental) url.searchParams.set('since', incremental)
       if (incremental) {
+        let since = incremental
         let hasMore = true
         while (hasMore && ticket.isCurrent()) {
-          const response = await fetch(url, { signal: controller.signal })
-          if (!response.ok) return
-          const data = await response.json() as MessageResponse
+          const data = await requestMessagePage(email.id, messageType, controller.signal, undefined, since)
+          if (!data) return
           if (!ticket.isCurrent() || !isSnapshotCurrent()) return
           reconcileCounts(data)
           replaceMessages(mergeIncomingMessages(data.messages))
@@ -151,14 +172,13 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
             total: data.total, unread: data.unread,
           })
           latestCursorRef.current = data.latestCursor
+          since = data.latestCursor
           hasMore = Boolean(data.hasMore)
-          url.searchParams.set('since', data.latestCursor)
         }
         return
       }
-      const response = await fetch(url, { signal: controller.signal })
-      if (!response.ok) return
-      const data = await response.json() as MessageResponse
+      const data = await requestMessagePage(email.id, messageType, controller.signal, cursor)
+      if (!data) return
       if (!ticket.isCurrent() || !isSnapshotCurrent()) return
       reconcileCounts(data)
 
@@ -190,38 +210,34 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
       if (ticket.isCurrent()) {
         activeRequestRef.current = null
         setLoading(false)
-        setRefreshing(false)
         setLoadingMore(false)
       }
     }
   }
 
-  const startPolling = () => {
-    stopPolling()
-    pollTimeoutRef.current = setInterval(() => {
-      void fetchMessages(undefined, "poll")
-    }, EMAIL_CONFIG.POLL_INTERVAL)
-  }
+  const pollMessages = useEffectEvent(() => {
+    void fetchMessages(undefined, "poll")
+  })
 
-  const stopPolling = () => {
-    if (pollTimeoutRef.current) {
-      clearInterval(pollTimeoutRef.current)
-      pollTimeoutRef.current = null
+  const handleRefresh = async () => {
+    setManualRefreshing(true)
+    setLoadingMore(false)
+    try {
+      await fetchMessages(undefined, "refresh")
+    } finally {
+      setManualRefreshing(false)
     }
   }
 
-  const handleRefresh = async () => {
-    await fetchMessages(undefined, "refresh")
-  }
-
   const handleScroll = useThrottle((e: React.UIEvent<HTMLDivElement>) => {
-    if (loadingMore) return
+    if (loadingMore || refreshing) return
 
     const { scrollHeight, scrollTop, clientHeight } = e.currentTarget
     const threshold = clientHeight * 1.5
     const remainingScroll = scrollHeight - scrollTop
 
     if (remainingScroll <= threshold && nextCursor) {
+      setLoadingMore(true)
       void fetchMessages(nextCursor, "more")
     }
   }, 200)
@@ -244,7 +260,14 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
       }
 
       const data = await response.json() as { total?: number; unread?: number }
+      const deletedIndex = messagesRef.current.findIndex(entry => entry.id === message.id)
       replaceMessages(messagesRef.current.filter(e => e.id !== message.id))
+      // The deleted row takes its controls with it, so the dialog can no longer
+      // restore the focus to the delete button. Remember the neighbour that
+      // takes the place of the removed row.
+      const remaining = messagesRef.current
+      const neighbour = remaining[deletedIndex] ?? remaining[deletedIndex - 1]
+      restoreFocusRef.current = neighbour ? { kind: "message", id: neighbour.id } : { kind: "refresh" }
       if (messageType === 'sent') {
         setTotal(prev => Math.max(0, prev - 1))
       } else if (typeof data.total === "number" && typeof data.unread === "number") {
@@ -275,37 +298,124 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
   }
 
   useEffect(() => {
-    if (!email.id) {
-      return
-    }
+    if (!email.id) return
+    const scope = `mailbox:${email.id}:${messageType}`
     const requestGate = requestGateRef.current
-    requestGate.invalidate()
+    const ticket = requestGate.begin(scope)
+    const snapshot = mailboxSnapshots.snapshot()
     activeRequestRef.current?.abort()
-    activeRequestRef.current = null
-    setMessages([])
-    messagesRef.current = []
+    const controller = new AbortController()
+    activeRequestRef.current = controller
     latestCursorRef.current = null
-    setTotal(0)
-    setLoading(true)
-    replaceNextCursor(null)
-    void fetchMessages(undefined, "initial")
-    startPolling() 
+
+    void requestMessagePage(email.id, messageType, controller.signal)
+      .then(data => {
+        if (!data || !ticket.isCurrent() || (messageType !== "sent" && !mailboxSnapshots.isCurrent(email.id, snapshot))) return
+        if (messageType !== "sent" && data.total !== undefined && data.unread !== undefined) {
+          Object.assign(data, mailboxSnapshots.reconcile(email.id, snapshot, { total: data.total, unread: data.unread }))
+        }
+        if (!latestCursorRef.current) latestCursorRef.current = data.latestCursor
+        if (messageType !== "sent" && data.unread !== undefined) notifyMailboxUpdate({
+          emailId: email.id, totalDelta: 0, unreadDelta: 0, total: data.total, unread: data.unread,
+        })
+        const result = mergeRefreshedMessages(data.messages, messagesRef.current, data.nextCursor, nextCursorRef.current)
+        replaceMessages(result.messages)
+        replaceNextCursor(result.nextCursor)
+        if (typeof data.total === "number") setTotal(data.total)
+      })
+      .catch(error => {
+        if (!controller.signal.aborted && ticket.isCurrent()) console.error("Failed to fetch messages:", error)
+      })
+      .finally(() => {
+        if (ticket.isCurrent()) {
+          activeRequestRef.current = null
+          setLoading(false)
+          setLoadingMore(false)
+        }
+      })
+
+    const interval = setInterval(() => {
+      pollMessages()
+    }, EMAIL_CONFIG.POLL_INTERVAL)
+    pollTimeoutRef.current = interval
 
     return () => {
-      stopPolling() 
+      clearInterval(interval)
+      if (pollTimeoutRef.current === interval) pollTimeoutRef.current = null
       requestGate.invalidate()
-      activeRequestRef.current?.abort()
-      activeRequestRef.current = null
+      controller.abort()
+      if (activeRequestRef.current === controller) activeRequestRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [email.id, messageType])
 
   useEffect(() => {
-    if (refreshTrigger && refreshTrigger > 0) {
-      void fetchMessages(undefined, "refresh")
+    latestRefreshTriggerRef.current = refreshTrigger
+    if (!email.id || !refreshTrigger || refreshTrigger <= 0) return
+
+    const scope = `mailbox:${email.id}:${messageType}`
+    const requestGate = requestGateRef.current
+    const ticket = requestGate.begin(scope)
+    activeRequestRef.current?.abort()
+    const controller = new AbortController()
+    activeRequestRef.current = controller
+    const snapshot = mailboxSnapshots.snapshot()
+
+    void requestMessagePage(email.id, messageType, controller.signal)
+      .then(data => {
+        if (!data || !ticket.isCurrent() || (messageType !== "sent" && !mailboxSnapshots.isCurrent(email.id, snapshot))) return
+        if (messageType !== "sent" && data.total !== undefined && data.unread !== undefined) {
+          Object.assign(data, mailboxSnapshots.reconcile(email.id, snapshot, { total: data.total, unread: data.unread }))
+        }
+        if (!latestCursorRef.current) latestCursorRef.current = data.latestCursor
+        if (messageType !== "sent" && data.unread !== undefined) notifyMailboxUpdate({
+          emailId: email.id, totalDelta: 0, unreadDelta: 0, total: data.total, unread: data.unread,
+        })
+        const result = mergeRefreshedMessages(data.messages, messagesRef.current, data.nextCursor, nextCursorRef.current)
+        replaceMessages(result.messages)
+        replaceNextCursor(result.nextCursor)
+        if (typeof data.total === "number") setTotal(data.total)
+      })
+      .catch(error => {
+        if (!controller.signal.aborted && ticket.isCurrent()) console.error("Failed to fetch messages:", error)
+      })
+      .finally(() => {
+        if (ticket.isCurrent()) {
+          activeRequestRef.current = null
+          setLoading(false)
+          setLoadingMore(false)
+          if (latestRefreshTriggerRef.current === refreshTrigger) {
+            setCompletedRefreshTrigger(refreshTrigger)
+          }
+        }
+      })
+
+    return () => {
+      requestGate.invalidate()
+      controller.abort()
+      if (activeRequestRef.current === controller) activeRequestRef.current = null
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [refreshTrigger])
+  }, [email.id, messageType, refreshTrigger])
+
+  const focusDeletedNeighbour = useCallback((target: MessageFocusTarget) => {
+    if (target.kind === "message") {
+      messageButtonRefs.current.get(target.id)?.focus()
+      return
+    }
+    refreshButtonRef.current?.focus()
+  }, [])
+
+  // The deleted row takes the focused control with it, so the focus would end
+  // up on the document body. Restore it to a row that is still listed.
+  useEffect(() => {
+    const target = restoreFocusRef.current
+    if (!target) return
+    const activeElement = document.activeElement
+    // The confirmation dialog can still hold the focus; it restores the focus
+    // when it closes.
+    if (activeElement && activeElement !== document.body && activeElement.isConnected) return
+    restoreFocusRef.current = null
+    focusDeletedNeighbour(target)
+  }, [messages, focusDeletedNeighbour])
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -326,6 +436,7 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
     <div className="h-full flex flex-col">
       <div className="p-2.5 flex justify-between items-center border-b border-border/70 bg-secondary/20">
         <Button
+          ref={refreshButtonRef}
           variant="ghost"
           size="icon"
           aria-label={tCommon("refresh")}
@@ -356,18 +467,22 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
               >
                 <div className="flex items-start gap-3">
                   <button type="button" onClick={() => onMessageSelect(message.id, messageType, messageType !== 'sent' && !message.is_read)}
+                    ref={(element) => {
+                      if (element) messageButtonRefs.current.set(message.id, element)
+                      else messageButtonRefs.current.delete(message.id)
+                    }}
                     aria-pressed={selectedMessageId === message.id}
                     className="flex flex-1 min-w-0 items-start gap-3 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                   <Mail className="w-4 h-4 shrink-0 text-primary/60 mt-1" />
                   <div className="min-w-0 flex-1">
-                    <p className={cn("text-sm truncate", messageType !== 'sent' && !message.is_read ? "font-bold" : "font-normal")}>{message.subject}</p>
+                    <p title={message.subject} className={cn("text-sm truncate", messageType !== 'sent' && !message.is_read ? "font-bold" : "font-normal")}>{message.subject}</p>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
-                      <span className="truncate">
+                      <span className="truncate" title={message.from_address || message.to_address || ''}>
                         {message.from_address || message.to_address || ''}
                       </span>
                       <span className="flex items-center gap-1">
                         <Calendar className="w-3 h-3" />
-                        {new Date(message.received_at || message.sent_at || 0).toLocaleString()}
+                        <SharedDateTime value={message.received_at || message.sent_at || 0} locale={locale} />
                       </span>
                     </div>
                   </div>
@@ -411,14 +526,22 @@ export function MessageList({ email, messageType, onMessageSelect, selectedMessa
             )}
           </div>
         ) : (
-          <div className="p-4 text-center text-sm text-muted-foreground">
-            {t("noMessages")}
-          </div>
+          <EmptyState message={t("noMessages")} />
         )}
       </div>
     </div>
     <AlertDialog open={!!messageToDelete} onOpenChange={() => setMessageToDelete(null)}>
-      <AlertDialogContent>
+      <AlertDialogContent
+        onCloseAutoFocus={(event) => {
+          const target = restoreFocusRef.current
+          if (!target) return
+          restoreFocusRef.current = null
+          // The default restore targets the delete button of the removed row,
+          // which would drop the focus on the document body.
+          event.preventDefault()
+          focusDeletedNeighbour(target)
+        }}
+      >
         <AlertDialogHeader>
           <AlertDialogTitle>{t("deleteConfirm")}</AlertDialogTitle>
           <AlertDialogDescription>

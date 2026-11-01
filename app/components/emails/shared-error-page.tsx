@@ -31,7 +31,7 @@ export function SharedErrorPage({
 
   return (
     <div className="fluent-shell min-h-screen flex flex-col justify-center items-center">
-      <div className="relative z-10 container mx-auto p-4 max-w-4xl">
+      <div className="relative z-10 container">
         <BrandHeader
           title={resolvedTitle}
           subtitle={resolvedSubtitle}

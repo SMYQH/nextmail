@@ -2,6 +2,7 @@
 
 import { useLocaleSwitcher } from "@/hooks/use-locale-switcher"
 import { LOCALE_LABELS } from "@/i18n/config"
+import { useTranslations } from "next-intl"
 import { Button } from "@/components/ui/button"
 import { Languages } from "lucide-react"
 import {
@@ -13,6 +14,7 @@ import {
 
 export function FloatingLanguageSwitcher() {
   const { locale, locales, switchLocale } = useLocaleSwitcher()
+  const tCommon = useTranslations("common.actions")
 
   return (
     <div className="fixed bottom-6 right-6 z-50">
@@ -22,9 +24,9 @@ export function FloatingLanguageSwitcher() {
             variant="outline"
             size="icon"
             className="shadow-xs relative"
-            aria-label="Switch language"
+            aria-label={tCommon("switchLanguage")}
           >
-            <Languages className="h-5 w-5 text-primary" />
+            <Languages className="h-5 w-5 text-primary" aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" side="top" className="mb-2">

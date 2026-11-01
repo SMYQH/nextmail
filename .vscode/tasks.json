@@ -1,0 +1,57 @@
+{
+  // Tasks used by .vscode/launch.json. Every task stays inside the repository
+  // conventions: no `.env`, `.env.local` or `.dev.vars` file is created, and
+  // the ignored `wrangler*.json` files are generated from the tracked
+  // templates before a local server starts.
+  //
+  // The tasks use the built-in npm task provider, so they work with any VS Code
+  // or VSCodium build that ships with npm support, on Windows, macOS and Linux.
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "wrangler: config",
+      "detail": "Generate the ignored local Wrangler configs from the tracked templates.",
+      "type": "npm",
+      "script": "config:wrangler",
+      "problemMatcher": []
+    },
+    {
+      "label": "dev: server",
+      "detail": "Start the Next.js dev server on http://localhost:3000.",
+      "type": "npm",
+      "script": "dev",
+      "isBackground": true,
+      "problemMatcher": {
+        "owner": "nextmail",
+        "pattern": {
+          "regexp": "^.*$",
+          "file": 1,
+          "location": 2,
+          "message": 3
+        },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": ".*",
+          "endsPattern": "^- Local:\\s+http://localhost:\\d+"
+        }
+      },
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true
+      }
+    },
+    {
+      "label": "wait: dev server",
+      "detail": "Wait until the dev server accepts connections on port 3000.",
+      "type": "process",
+      "command": "node",
+      "args": ["${workspaceFolder}/.vscode/wait-for-dev-server.mjs", "3000", "120000"],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "never",
+        "panel": "shared"
+      }
+    }
+  ]
+}

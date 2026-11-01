@@ -214,14 +214,23 @@ test("a concurrent Catch-all address collision returns the same localization cod
   assert.equal(config.has("CATCHALL_EMAIL"), false)
 })
 
+let catchAllDelivery = 0
+
 async function receiveUnknownMail() {
   const rejected: string[] = []
+  const tasks: Promise<unknown>[] = []
+  // Each call is a separate delivery, so it carries its own Message-ID.
+  catchAllDelivery += 1
   await emailReceiver.email({
     from: "sender@example.test",
     to: "unknown@example.com",
-    raw: new Response("From: sender@example.test\r\nSubject: interleaved\r\n\r\nbody").body!,
+    raw: new Response(`From: sender@example.test\r\nSubject: interleaved\r\nMessage-ID: <catch-all-${catchAllDelivery}@example.test>\r\n\r\nbody`).body!,
     setReject: (reason: string) => rejected.push(reason),
-  } as unknown as ForwardableEmailMessage, { DB: d1, SITE_CONFIG: siteConfig } as unknown as Env)
+  } as unknown as ForwardableEmailMessage, { DB: d1, SITE_CONFIG: siteConfig } as unknown as Env, {
+    waitUntil(task: Promise<unknown>) { tasks.push(task) },
+    passThroughOnException() {},
+  } as unknown as ExecutionContext)
+  await Promise.all(tasks)
   return rejected
 }
 

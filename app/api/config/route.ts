@@ -11,6 +11,7 @@ import { eq, sql } from "drizzle-orm"
 import { normalizeEmailDomains } from "@/lib/email-domains"
 import { getAvailableEmailDomains } from "@/lib/user-email-domain-access"
 import { isValidMailboxName } from "@/lib/mailbox-name"
+import { parsePositiveSafeInteger } from "@/lib/max-emails"
 import {
   CATCHALL_EMAIL_KEY,
   getEmailLocalPart,
@@ -79,7 +80,7 @@ export async function GET() {
     defaultRole: defaultRole || ROLES.CIVILIAN,
     emailDomains: configuredDomains.join(","),
     adminContact: adminContact || "",
-    maxEmails: maxEmails || EMAIL_CONFIG.MAX_ACTIVE_EMAILS.toString(),
+    maxEmails: String(parsePositiveSafeInteger(maxEmails) ?? EMAIL_CONFIG.MAX_ACTIVE_EMAILS),
     ...(userId
       ? { availableEmailDomains: await getAvailableEmailDomains(userId, configuredDomains) }
       : {}),
@@ -87,7 +88,7 @@ export async function GET() {
 
   // Catch-all and Turnstile settings are privileged configuration. Do not read or
   // return them for callers without the site configuration permission.
-  if (!canManageConfig || !userId) return Response.json(response)
+  if (!canManageConfig || !userId) return Response.json(response, { headers: { "Cache-Control": "no-store" } })
 
   const [turnstileEnabled, turnstileSiteKey, turnstileSecretKey, catchAllValue] = await Promise.all([
     env.SITE_CONFIG.get("TURNSTILE_ENABLED"),
@@ -112,10 +113,11 @@ export async function GET() {
     turnstile: {
       enabled: turnstileEnabled === "true",
       siteKey: turnstileSiteKey || "",
-      secretKey: turnstileSecretKey || "",
+      // The stored secret never leaves the server; report only whether one exists.
+      hasSecret: Boolean(turnstileSecretKey),
     },
     catchAll: { domains: catchAllDomains },
-  })
+  }, { headers: { "Cache-Control": "no-store" } })
 }
 
 export async function POST(request: Request) {
@@ -152,6 +154,10 @@ export async function POST(request: Request) {
   if (typeof adminContact !== "string" || typeof maxEmails !== "string") {
     return Response.json({ error: "无效的请求数据" }, { status: 400 })
   }
+  const parsedMaxEmails = parsePositiveSafeInteger(maxEmails)
+  if (parsedMaxEmails === null) {
+    return Response.json({ error: "无效的请求数据" }, { status: 400 })
+  }
 
   const turnstileConfig = turnstile ?? {
     enabled: false,
@@ -167,11 +173,16 @@ export async function POST(request: Request) {
     return Response.json({ error: "无效的 Turnstile 配置" }, { status: 400 })
   }
 
-  if (turnstileConfig.enabled && (!turnstileConfig.siteKey || !turnstileConfig.secretKey)) {
+  const env = getCloudflareContext().env
+  // The stored secret is never sent to the browser, so a blank submitted secret
+  // keeps the stored value instead of forcing the operator to retype it.
+  const storedTurnstileSecretKey = await env.SITE_CONFIG.get("TURNSTILE_SECRET_KEY")
+  const effectiveSecretKey = turnstileConfig.secretKey.trim() || storedTurnstileSecretKey || ""
+
+  if (turnstileConfig.enabled && (!turnstileConfig.siteKey || !effectiveSecretKey)) {
     return Response.json({ error: "Turnstile 启用时需要提供 Site Key 和 Secret Key" }, { status: 400 })
   }
 
-  const env = getCloudflareContext().env
   let normalizedCatchAllConfig: CatchAllEmailConfig | undefined
 
   // Legacy config clients omit catchAll. In that case, retain the current KV
@@ -275,10 +286,10 @@ export async function POST(request: Request) {
     env.SITE_CONFIG.put("DEFAULT_ROLE", defaultRole),
     env.SITE_CONFIG.put("EMAIL_DOMAINS", domains.join(",")),
     env.SITE_CONFIG.put("ADMIN_CONTACT", adminContact),
-    env.SITE_CONFIG.put("MAX_EMAILS", maxEmails),
+    env.SITE_CONFIG.put("MAX_EMAILS", String(parsedMaxEmails)),
     env.SITE_CONFIG.put("TURNSTILE_ENABLED", turnstileConfig.enabled.toString()),
     env.SITE_CONFIG.put("TURNSTILE_SITE_KEY", turnstileConfig.siteKey),
-    env.SITE_CONFIG.put("TURNSTILE_SECRET_KEY", turnstileConfig.secretKey),
+    env.SITE_CONFIG.put("TURNSTILE_SECRET_KEY", effectiveSecretKey),
   ]
 
   if (normalizedCatchAllConfig) {

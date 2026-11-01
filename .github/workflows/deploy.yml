@@ -62,3 +62,15 @@ jobs:
           OPENAPI_WAF_VERIFY_SECRET: ${{ secrets.OPENAPI_WAF_VERIFY_SECRET }}
           EMAIL_DOMAIN: ${{ secrets.EMAIL_DOMAIN }}
           WEBHOOK_ALLOWED_HOSTS: ${{ secrets.WEBHOOK_ALLOWED_HOSTS }}
+          DEFAULT_ROLE: ${{ secrets.DEFAULT_ROLE }}
+          EMAIL_DOMAINS: ${{ secrets.EMAIL_DOMAINS }}
+          ADMIN_CONTACT: ${{ secrets.ADMIN_CONTACT }}
+          MAX_EMAILS: ${{ secrets.MAX_EMAILS }}
+          TURNSTILE_ENABLED: ${{ secrets.TURNSTILE_ENABLED }}
+          TURNSTILE_SITE_KEY: ${{ secrets.TURNSTILE_SITE_KEY }}
+          TURNSTILE_SECRET_KEY: ${{ secrets.TURNSTILE_SECRET_KEY }}
+          CATCHALL_EMAIL: ${{ secrets.CATCHALL_EMAIL }}
+          RESEND_CONFIG: ${{ secrets.RESEND_CONFIG }}
+          EMAIL_ROLE_LIMITS: ${{ secrets.EMAIL_ROLE_LIMITS }}
+          ADMIN_USERS: ${{ secrets.ADMIN_USERS }}
+          CATCHALL_OWNER_USERNAME: ${{ secrets.CATCHALL_OWNER_USERNAME }}

@@ -19,6 +19,14 @@ export function needsPasswordUpgrade(stored: string) {
   return !stored.startsWith("bcrypt-sha256:")
 }
 
+// A precomputed cost-10 hash keeps the unknown-username path doing the same bcrypt
+// comparison as a real account without starting asynchronous crypto at module load.
+const DUMMY_PASSWORD_HASH = "bcrypt-sha256:$2b$10$qGXkqIZGh6NVe5n8lZ4IV.KWLhafP/ra06.wpwxan.pUaYURS7sKC"
+
+export function getDummyPasswordHash(): Promise<string> {
+  return Promise.resolve(DUMMY_PASSWORD_HASH)
+}
+
 export async function comparePassword(password: string, stored: string | null): Promise<boolean> {
   if (!stored) return false
   if (!needsPasswordUpgrade(stored)) {

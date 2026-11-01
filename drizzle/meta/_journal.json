@@ -162,6 +162,34 @@
       "when": 1792072274092,
       "tag": "0022_stable_mail_delivery",
       "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1792829697029,
+      "tag": "0023_webhook_user_unique",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792848784520,
+      "tag": "0024_message_delivery_key",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792853729869,
+      "tag": "0025_expiry_cleanup_indexes",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1792862012749,
+      "tag": "0026_mailbox_created_at_index",
+      "breakpoints": true
     }
   ]
 }

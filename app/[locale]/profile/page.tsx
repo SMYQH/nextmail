@@ -22,7 +22,7 @@ export default async function ProfilePage({
 
   return (
     <div className="fluent-shell min-h-screen">
-      <div className="relative z-10 container mx-auto px-4 lg:px-8 max-w-[1600px]">
+      <div className="relative z-10 container">
         <Header />
         <main className="pt-20 pb-5">
           <ProfileCard user={session.user} canInitializeEmperor={canInitializeEmperor} />

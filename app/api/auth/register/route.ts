@@ -8,8 +8,15 @@ import { CredentialsError } from "@/lib/credentials-error"
 
 export async function POST(request: Request) {
   try {
-    const json = await request.json() as AuthSchema
-    
+    const json = await request.json().catch(() => null) as AuthSchema | null
+
+    if (!json || typeof json !== "object") {
+      return NextResponse.json(
+        { error: "输入格式不正确" },
+        { status: 400 }
+      )
+    }
+
     try {
       authSchema.parse(json)
     } catch (error) {

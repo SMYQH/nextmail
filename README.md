@@ -4,32 +4,23 @@
 </p>
 
 ## 使用文档
-**原 NextMail 仓库完整文档**: [https://docs.moemail.app](https://docs.moemail.app)
+**原 MoeMail 仓库完整文档**: [https://docs.moemail.app](https://docs.moemail.app)
 
 当前仓库文档：[使用](docs/usage.md) | [开发](docs/develop.md) | [部署](docs/deploy.md) | [审查](docs/review.md)
 
 ## 预览
 
-[![NextMail 界面预览](public/preview.png)](https://nextmail.pages.dev/zh-CN)
+[![NextMail 界面预览](public/preview.png)]
 
-在线体验：[nextmail.pages.dev](https://nextmail.pages.dev/zh-CN)
+## 核心特性改进
 
-## 特性
-
-- 🔒 **隐私保护**：保护您的真实邮箱地址，远离垃圾邮件和不必要的订阅
-- ⚡ **实时收件**：自动轮询，即时接收邮件通知
-- ⏱️ **灵活有效期**：支持 1 小时、24 小时、3 天或永久有效
-- 🎨 **主题切换**：支持亮色和暗色模式
-- 📱 **响应式设计**：完美适配桌面和移动设备
-- 🔄 **自动清理**：自动清理过期的邮箱和邮件
-- 📱 **PWA 支持**：支持 PWA 安装
-- ☁️ **Cloudflare 自部署**：用户名密码认证可能需要 Workers Paid 方案，详见[部署要求](docs/deploy.md#runtime-requirements)；只使用 OAuth 登录则可忽略。
-- 🎉 **简雅的 UI**：重构后的基于 WinUI3 Fluent Design 设计理念的界面，尽量支持移动端
-- 📤 **发件功能**：支持使用临时邮箱发送邮件，基于 Resend 服务
-- 🔔 **Webhook 通知**：支持通过 webhook 接收新邮件通知
-- 🛡️ **权限系统**：支持基于角色的权限控制系统
-- 🔑 **OpenAPI**：支持通过 API Key 访问 OpenAPI
-- 🌍 **多语言支持**：支持英文、简体中文，可自由切换或添加新语种
+- **Cloudflare 全自动部署**：一个配置即可快速部署，开箱即用
+- **简雅的 UI**：基于 WinUI3 Fluent 重构界面，并适配移动端
+- **多域名管理**：优化针对多收件域名的功能，支持定向管理
+- **性能优化**: 砍掉了 7M 超大字体并针对大陆进行优化
+- **批量管理**：邮箱批量删除、邮件批量删除
+- **自动化测试**: 补充编写大量测试文件
+- **安全修复**：包含独立发现的安全漏洞修复和功能性改进
 
 ## 技术栈
 
@@ -44,7 +35,8 @@
 - **ORM**: [Drizzle ORM](https://orm.drizzle.team/)
 - **国际化**: [next-intl](https://next-intl-docs.vercel.app/) 支持多语言，当前仅对 中文/英文 进行适配
 
-> 如需本地部署，请复制 `.env.deploy.example` 为本地 `.env.deploy` 并填写配置；`.env.deploy` 不应提交到 Git，部署令牌不能放入应用 `.env*` 文件。若在本地配置 `REPOSITORY_URL` 和 `GITHUB_TOKEN`，运行 `npm run deploy` 时会同步配置到 GitHub Actions Secrets，CI 仅从 Secrets 读取配置。
+> 开发和部署统一使用被忽略的 `.env.deploy`，从 `.env.deploy.example` 复制后填写必填项即可。示例后半部分提供网站、Turnstile、Resend、Catch-all 和账号初始化等可选项。详见[部署说明](docs/deploy.md)。
 
-> 如需清理 Cloudflare 上的 NextMail 部署资源，可运行 `npm run delete`；该命令会删除项目 D1 数据库及其中的数据，但不会修改 GitHub。详情见[部署说明](docs/deploy.md#清理-cloudflare-部署)。
+## 鸣谢
 
+- 原 MoeMail 仓库开发者：[beilunyang](https://github.com/beilunyang/moemail)

@@ -132,13 +132,13 @@ export function SendDialog({ emailId, fromAddress, allowCustomFrom = false, onSe
           {allowCustomFrom ? (
             <div className="space-y-1.5">
               <div className="text-sm text-muted-foreground">{t("from")}</div>
-              <div className="flex items-center rounded-md border border-input bg-background">
+              <div className="flex min-w-0 items-center rounded-md border border-input bg-background focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
                 <Input
                   value={fromLocalPart}
                   onChange={(event) => setFromLocalPart(event.target.value)}
                   placeholder={t("fromPrefixPlaceholder")}
                   aria-label={t("fromPrefixPlaceholder")}
-                  className="border-0 focus-visible:ring-0 focus-visible:ring-offset-0"
+                  className="min-w-0 flex-1 border-0"
                 />
                 <span className="shrink-0 pr-3 text-sm text-muted-foreground">
                   @{getEmailDomain(fromAddress) ?? ""}

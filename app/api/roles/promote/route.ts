@@ -9,10 +9,12 @@ import { assignRoleToUser, findOrCreateRole, checkPermission } from "@/lib/auth"
 export async function POST(request: Request) {
   if (!await checkPermission(PERMISSIONS.PROMOTE_USER)) return Response.json({ error: "Forbidden" }, { status: 403 })
   try {
-    const { userId, roleName } = await request.json() as { 
-      userId: string, 
-      roleName: typeof ROLES.DUKE | typeof ROLES.KNIGHT | typeof ROLES.CIVILIAN 
-    };
+    const body = await request.json().catch(() => null) as {
+      userId?: unknown
+      roleName?: unknown
+    } | null
+    const userId = typeof body?.userId === "string" ? body.userId : ""
+    const roleName = body?.roleName as typeof ROLES.DUKE | typeof ROLES.KNIGHT | typeof ROLES.CIVILIAN | undefined
     if (!userId || !roleName) {
       return Response.json(
         { error: "缺少必要参数" },

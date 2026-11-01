@@ -17,7 +17,8 @@
     "share": "分享",
     "copy": "复制",
     "close": "关闭",
-    "toggleTheme": "切换主题"
+    "toggleTheme": "切换主题",
+    "switchLanguage": "切换语言"
   },
   "nav": {
     "home": "首页",
@@ -26,5 +27,9 @@
     "logout": "退出登录",
     "backToMailbox": "返回邮箱"
   },
-  "github": "获取网站源代码"
+  "github": "获取网站源代码",
+  "pagination": {
+    "loadMore": "加载更多",
+    "loadFailed": "加载更多内容失败"
+  }
 }

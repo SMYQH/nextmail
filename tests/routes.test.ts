@@ -5,6 +5,7 @@ import { drizzle } from "drizzle-orm/d1"
 import * as schema from "../app/lib/schema"
 import { createTestDatabase } from "./helpers/database"
 import { PERMISSIONS } from "../app/lib/permissions"
+import { EMAIL_CONFIG } from "../app/config/email"
 
 const { sqlite, d1 } = createTestDatabase()
 const db = drizzle(d1, { schema })
@@ -12,16 +13,18 @@ let requestHeaders = new Headers()
 let sessionId: string | undefined
 let sessionRole = "duke"
 const config = new Map<string, string>()
+const configWrites: Array<[string, string]> = []
 
 mock.module("../app/lib/db.ts", { namedExports: { createDb: () => db } })
 mock.module("next/headers", { namedExports: { headers: async () => requestHeaders } })
-mock.module("@opennextjs/cloudflare", { namedExports: { getCloudflareContext: () => ({ env: { DB: d1, SITE_CONFIG: { get: async (key: string) => config.get(key) ?? null, put: async (key: string, value: string) => { config.set(key, value) } } } }) } })
-mock.module("../app/lib/auth.ts", { namedExports: { GET: async () => Response.json(sessionId ? { user: { id: sessionId } } : null), auth: async () => sessionId ? { user: { id: sessionId } } : null, getUserRole: async () => sessionRole, checkPermission: async () => sessionId === "owner" } })
+mock.module("@opennextjs/cloudflare", { namedExports: { getCloudflareContext: () => ({ env: { DB: d1, SITE_CONFIG: { get: async (key: string) => config.get(key) ?? null, put: async (key: string, value: string) => { configWrites.push([key, value]); config.set(key, value) } } } }) } })
+mock.module("../app/lib/auth.ts", { namedExports: { GET: async () => Response.json(sessionId ? { user: { id: sessionId } } : null), auth: async () => sessionId ? { user: { id: sessionId } } : null, getUserRole: async () => sessionRole, checkPermission: async (permission: string) => permission === "manage_api_key" ? Boolean(sessionId && !requestHeaders.has("X-API-Key") && sqlite.prepare("SELECT r.name FROM user_role ur JOIN role r ON r.id = ur.role_id WHERE ur.user_id = ?").all(sessionId).some(role => role.name === "duke" || role.name === "emperor")) : sessionId === "owner", assignRoleToUser: async () => undefined, findOrCreateRole: async (_db: unknown, roleName: string) => ({ id: roleName }) } })
 
 const { getUserId } = await import("../app/lib/apiKey")
 const siteConfig = await import("../app/api/config/route")
 const generate = await import("../app/api/emails/generate/route")
 const mailboxes = await import("../app/api/emails/route")
+const bulkMailboxes = await import("../app/api/emails/bulk/route")
 const mailbox = await import("../app/api/emails/[id]/route")
 const rolesUsers = await import("../app/api/roles/users/route")
 const userDomains = await import("../app/api/roles/user-domains/route")
@@ -33,14 +36,18 @@ const messageShares = await import("../app/api/emails/[id]/messages/[messageId]/
 const revokeMessageShare = await import("../app/api/emails/[id]/messages/[messageId]/share/[shareId]/route")
 const publicMessage = await import("../app/api/shared/message/[token]/route")
 const publicMailboxMessage = await import("../app/api/shared/[token]/messages/[messageId]/route")
+const publicMailboxInfo = await import("../app/api/shared/[token]/route")
+const publicMailboxMessages = await import("../app/api/shared/[token]/messages/route")
 const emailService = await import("../app/api/config/email-service/route")
 const send = await import("../app/api/emails/[id]/send/route")
 const sendPermission = await import("../app/api/emails/send-permission/route")
 const apiKeysRoute = await import("../app/api/api-keys/route")
+const apiKeyRoute = await import("../app/api/api-keys/[id]/route")
 const init = await import("../app/api/roles/init-emperor/route")
 
 function reset() {
   config.clear()
+  configWrites.length = 0
   config.set("EMAIL_SERVICE_ENABLED", "true")
   config.set("EMAIL_ROLE_LIMITS", '{"duke":2,"knight":-1}')
   config.set("RESEND_API_KEY", "test-only")
@@ -62,12 +69,80 @@ beforeEach(t => {
 })
 after(() => sqlite.close())
 const request = () => new Request("https://app.example.com/api/emails/email/message")
+const bulkDeleteRequest = (ids: unknown) => new Request("https://app.example.com/api/emails/bulk", {
+  method: "DELETE",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ ids }),
+})
 const params = () => ({ params: Promise.resolve({ id: "email", messageId: "message" }) })
 const sendParams = (id = "email") => ({ params: Promise.resolve({ id }) })
 const sendRequest = (body: unknown = { to: "a@example.com", subject: "Subject", content: "<p>Hello</p>" }) =>
   new Request(request(), { method: "POST", body: JSON.stringify(body) })
 const usedQuota = () => sqlite.prepare("SELECT COALESCE(SUM(used), 0) AS n FROM send_usage").get()?.n
 const sentCount = () => sqlite.prepare("SELECT COUNT(*) AS n FROM message WHERE type = 'sent'").get()?.n
+
+function createAsyncBarrier(participants: number) {
+  let arrivals = 0
+  let release!: () => void
+  const released = new Promise<void>(resolve => { release = resolve })
+  return async () => {
+    arrivals += 1
+    if (arrivals === participants) release()
+    await released
+  }
+}
+
+function pauseEmailInserts(t: TestContext, participants: number, beforeInsert?: () => void) {
+  const waitForAllInserts = createAsyncBarrier(participants)
+  let insertAttempts = 0
+  const beforeExecution = async () => {
+    insertAttempts += 1
+    await waitForAllInserts()
+    beforeInsert?.()
+  }
+  t.after(() => assert.equal(insertAttempts, participants, "Every intended insert must reach the barrier"))
+  const originalPrepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (query: string) => {
+    const statement = originalPrepare(query)
+    if (!/^insert into ["`]?email["`]?/i.test(query.trim())) return statement
+
+    return new Proxy(statement, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values: Parameters<typeof target.bind>) => {
+            const bound = target.bind(...values)
+            return new Proxy(bound, {
+              get(boundTarget, boundProperty) {
+                if (boundProperty === "first") {
+                  return async (...args: Parameters<typeof boundTarget.first>) => {
+                    await beforeExecution()
+                    return boundTarget.first(...args)
+                  }
+                }
+                if (boundProperty === "all") {
+                  return async () => {
+                    await beforeExecution()
+                    return boundTarget.all()
+                  }
+                }
+                if (boundProperty === "raw") {
+                  return async (...args: Parameters<typeof boundTarget.raw>) => {
+                    await beforeExecution()
+                    return boundTarget.raw(...args)
+                  }
+                }
+                const member = Reflect.get(boundTarget, boundProperty, boundTarget)
+                return typeof member === "function" ? member.bind(boundTarget) : member
+              },
+            })
+          }
+        }
+        const member = Reflect.get(target, property, target)
+        return typeof member === "function" ? member.bind(target) : member
+      },
+    })
+  })
+}
 
 function setWebhookEnvironment(t: TestContext, value: string) {
   const previous = process.env.WEBHOOK_ALLOWED_HOSTS
@@ -77,6 +152,58 @@ function setWebhookEnvironment(t: TestContext, value: string) {
     else process.env.WEBHOOK_ALLOWED_HOSTS = previous
   })
 }
+
+test("pagination routes return HTTP 400 for malformed cursors without exposing data", async t => {
+  const cursorValues = ["not-a-cursor", Buffer.from("null").toString("base64"),
+    Buffer.from('{}').toString("base64"), Buffer.from('{"timestamp":"0","id":"message"}').toString("base64")]
+  const routes = [
+    ["mailboxes", (cursor: string) => mailboxes.GET(new Request(`https://app.example.com/api/emails?cursor=${encodeURIComponent(cursor)}`))],
+    ["messages", (cursor: string) => mailbox.GET(new Request(`https://app.example.com/api/emails/email?cursor=${encodeURIComponent(cursor)}`), params())],
+    ["shared messages", (cursor: string) => publicMailboxMessages.GET(new Request(`https://app.example.com/api/shared/mailbox-token/messages?cursor=${encodeURIComponent(cursor)}`), { params: Promise.resolve({ token: "mailbox-token" }) })],
+    ["polling", (cursor: string) => mailbox.GET(new Request(`https://app.example.com/api/emails/email?since=${encodeURIComponent(cursor)}`), params())],
+  ] as const
+  for (const [name, getPage] of routes) {
+    for (const cursor of cursorValues) {
+      await t.test(`${name}: ${cursor}`, async () => {
+        if (name === "shared messages") sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('share','email','mailbox-token',0)")
+        const response = await getPage(cursor)
+        assert.equal(response.status, 400)
+        assert.deepEqual(await response.json(), { error: "Invalid cursor" })
+      })
+    }
+  }
+})
+
+test("cursor errors do not replace authentication, ownership, or expired-share responses", async () => {
+  const invalid = "not-a-cursor"
+  const listRequest = new Request(`https://app.example.com/api/emails?cursor=${invalid}`)
+  const messagesRequest = new Request(`https://app.example.com/api/emails/email?cursor=${invalid}`)
+  sessionId = undefined
+  assert.equal((await mailboxes.GET(listRequest)).status, 401)
+  assert.equal((await mailbox.GET(messagesRequest, params())).status, 401)
+  sessionId = "owner"
+  sqlite.exec("UPDATE email SET userId='victim'")
+  assert.equal((await mailbox.GET(messagesRequest, params())).status, 403)
+  const sharedRequest = new Request(`https://app.example.com/api/shared/mailbox-token/messages?cursor=${invalid}`)
+  const sharedParams = { params: Promise.resolve({ token: "mailbox-token" }) }
+  assert.equal((await publicMailboxMessages.GET(sharedRequest, sharedParams)).status, 404)
+  sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at,expires_at) VALUES('share','email','mailbox-token',0,0)")
+  assert.equal((await publicMailboxMessages.GET(sharedRequest, sharedParams)).status, 410)
+})
+
+test("valid pagination cursors do not turn database failures into HTTP 400", async t => {
+  sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('share','email','mailbox-token',0)")
+  const cursor = encodeURIComponent(Buffer.from('{"timestamp":100,"id":"message"}').toString("base64"))
+  const fail = async () => { throw new Error("Synthetic query failure") }
+  const mailboxQueries = t.mock.method(db.query.emails, "findMany", fail)
+  const messageQueries = t.mock.method(db.query.messages, "findMany", fail)
+  t.mock.method(console, "error", () => {})
+  assert.equal((await mailboxes.GET(new Request(`https://app.example.com/api/emails?cursor=${cursor}`))).status, 500)
+  assert.equal((await mailbox.GET(new Request(`https://app.example.com/api/emails/email?cursor=${cursor}`), params())).status, 500)
+  assert.equal((await publicMailboxMessages.GET(new Request(`https://app.example.com/api/shared/mailbox-token/messages?cursor=${cursor}`), { params: Promise.resolve({ token: "mailbox-token" }) })).status, 500)
+  assert.equal(mailboxQueries.mock.callCount(), 1)
+  assert.equal(messageQueries.mock.callCount(), 2)
+})
 
 test("mailbox creation normalizes legacy domains and configuration saves", async () => {
   config.set("EMAIL_DOMAINS", "example.com, EXAMPLE.org , example.com")
@@ -90,6 +217,251 @@ test("mailbox creation normalizes legacy domains and configuration saves", async
   assert.equal(config.get("EMAIL_DOMAINS"), "example.net,example.com")
   assert.equal((await save(" , ")).status, 400)
   assert.equal(config.get("EMAIL_DOMAINS"), "example.net,example.com")
+})
+
+test("parallel mailbox creation cannot exceed the active mailbox cap", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "2")
+  const countBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n)
+  pauseEmailInserts(t, 2)
+
+  const create = (name: string) => generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name, domain: "example.com", expiryTime: 0 }),
+  }))
+  const responses = await Promise.all([create("race-one"), create("race-two")])
+
+  assert.deepEqual(responses.map(response => response.status).sort((a, b) => a - b), [200, 403])
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n) - countBefore, 1)
+
+  const created = responses.find(response => response.status === 200)
+  const refused = responses.find(response => response.status === 403)
+  assert.ok(created)
+  assert.ok(refused)
+  assert.equal((await refused.json() as { error: string }).error, "已达到最大邮箱数量限制 (2)")
+  const body = await created.json() as { id: string; email: string }
+  assert.match(body.email, /^race-(one|two)@example\.com$/)
+  assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ? AND userId = ?").get(body.id, "owner")?.address, body.email)
+})
+
+test("overlapping duplicate mailbox creation keeps one row and returns conflict", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "2")
+  const countBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n)
+  pauseEmailInserts(t, 2)
+
+  const create = () => generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "same-address", domain: "example.com", expiryTime: 0 }),
+  }))
+  const responses = await Promise.all([create(), create()])
+
+  assert.deepEqual(responses.map(response => response.status).sort((a, b) => a - b), [200, 409])
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n) - countBefore, 1)
+  const conflict = responses.find(response => response.status === 409)
+  assert.ok(conflict)
+  assert.deepEqual(await conflict.json(), { error: "Email address already exists" })
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE address = ?").get("same-address@example.com")?.n, 1)
+})
+
+test("overlapping mixed-case mailbox address conflicts remain HTTP 409", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "10")
+  const countBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n)
+  pauseEmailInserts(t, 1, () => {
+    sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?,?,?,?)")
+      .run("mixed-case-winner", "MiXeD-Race@Example.com", "victim", Date.now(), Date.now() + 60_000)
+  })
+
+  const response = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "mixed-race", domain: "example.com", expiryTime: 0 }),
+  }))
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { error: "Email address already exists" })
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), countBefore + 1)
+  assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ?").get("mixed-case-winner")?.address, "MiXeD-Race@Example.com")
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE address = ?").get("mixed-race@example.com")?.n), 0)
+})
+
+test("mailbox ID collisions preserve conflict responses", async t => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "10")
+  const collisionId = "11111111-1111-4111-8111-111111111111"
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?,?,?,?)")
+    .run(collisionId, "existing-id@example.com", "victim", Date.now(), Date.now() + 60_000)
+  t.mock.method(crypto, "randomUUID", () => collisionId)
+  const countBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n)
+
+  const response = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "new-address", domain: "example.com", expiryTime: 0 }),
+  }))
+
+  assert.equal(response.status, 409)
+  assert.deepEqual(await response.json(), { error: "Email address already exists" })
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), countBefore)
+  assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ?").get(collisionId)?.address, "existing-id@example.com")
+})
+
+test("atomic mailbox creation does not count expired mailboxes toward the cap", async () => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "2")
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?,?,?,?)")
+    .run("expired-email", "expired@example.com", "owner", Date.now() - 120_000, Date.now() - 60_000)
+  const activeBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ? AND expires_at > ?").get("owner", Date.now())?.n)
+  const countBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n)
+  assert.equal(activeBefore, 1)
+
+  const response = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "after-expired", domain: "example.com", expiryTime: 0 }),
+  }))
+
+  assert.equal(response.status, 200)
+  const body = await response.json() as { id: string; email: string }
+  assert.equal(body.email, "after-expired@example.com")
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ?").get("owner")?.n) - countBefore, 1)
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email WHERE userId = ? AND expires_at > ?").get("owner", Date.now())?.n), 2)
+  assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ?").get(body.id)?.address, body.email)
+})
+
+test("mailbox limit settings reject invalid values before any config or mailbox writes", async () => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("ADMIN_CONTACT", "previous@example.com")
+  config.set("MAX_EMAILS", "7")
+  const mailboxCountBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n)
+
+  const save = (maxEmails: string) => siteConfig.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({
+      defaultRole: "duke",
+      emailDomains: "example.com",
+      adminContact: "changed@example.com",
+      maxEmails,
+      catchAll: { domains: { "example.com": { enabled: true, showAlways: true, mailboxName: "reserved" } } },
+    }),
+  }))
+
+  for (const maxEmails of ["abc", "-5", "0", "", "1.5", "9007199254740992", "1.0000000000000001", "9007199254740991.1"]) {
+    assert.equal((await save(maxEmails)).status, 400, `maxEmails=${maxEmails} must be rejected`)
+    assert.equal(config.get("MAX_EMAILS"), "7")
+    assert.equal(config.get("EMAIL_DOMAINS"), "example.com")
+    assert.equal(config.get("ADMIN_CONTACT"), "previous@example.com")
+    assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), mailboxCountBefore)
+    assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM catch_all_mailbox").get()?.n), 0)
+    assert.equal(configWrites.length, 0)
+  }
+})
+
+test("mailbox limits persist valid safe-integer boundaries and enforce them", async () => {
+  const save = (maxEmails: string) => siteConfig.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ defaultRole: "duke", emailDomains: "example.com", adminContact: "", maxEmails }),
+  }))
+
+  const minimum = await save("1")
+  assert.equal(minimum.status, 200)
+  assert.equal(config.get("MAX_EMAILS"), "1")
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), 1)
+
+  const denied = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "over-limit", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(denied.status, 403)
+  assert.match((await denied.json() as { error: string }).error, /\(1\)$/)
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), 1)
+
+  const maximum = String(Number.MAX_SAFE_INTEGER)
+  const maximumSave = await save(maximum)
+  assert.equal(maximumSave.status, 200)
+  assert.equal(config.get("MAX_EMAILS"), maximum)
+  assert.deepEqual(configWrites.filter(([key]) => key === "MAX_EMAILS").map(([, value]) => value), ["1", maximum])
+
+  const created = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "within-limit", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(created.status, 200)
+  const body = await created.json() as { id: string; email: string }
+  assert.equal(body.email, "within-limit@example.com")
+  assert.equal(sqlite.prepare("SELECT address FROM email WHERE id = ?").get(body.id)?.address, body.email)
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), 2)
+})
+
+test("invalid stored mailbox limits use the effective default instead of disabling the cap", async () => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("MAX_EMAILS", "not-a-number")
+  const settings = await siteConfig.GET()
+  assert.equal(((await settings.json()) as { maxEmails: string }).maxEmails, String(EMAIL_CONFIG.MAX_ACTIVE_EMAILS))
+  assert.equal(config.get("MAX_EMAILS"), "not-a-number")
+
+  const expiresAt = Date.now() + 60_000
+  const insertMailbox = sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?,?, ?, ?)")
+  for (let index = 1; index < EMAIL_CONFIG.MAX_ACTIVE_EMAILS; index += 1) {
+    insertMailbox.run(`default-limit-${index}`, `default-limit-${index}@example.com`, "owner", Date.now(), expiresAt)
+  }
+  const mailboxCountBefore = Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n)
+
+  const response = await generate.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({ name: "must-be-refused", domain: "example.com", expiryTime: 0 }),
+  }))
+  assert.equal(response.status, 403)
+  assert.equal((await response.json() as { error: string }).error, `已达到最大邮箱数量限制 (${EMAIL_CONFIG.MAX_ACTIVE_EMAILS})`)
+  assert.equal(Number(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n), mailboxCountBefore)
+  assert.equal(config.get("MAX_EMAILS"), "not-a-number")
+})
+
+test("website configuration never returns the stored Turnstile secret", async () => {
+  config.set("EMAIL_DOMAINS", "example.com")
+  config.set("TURNSTILE_ENABLED", "true")
+  config.set("TURNSTILE_SITE_KEY", "public-site-key")
+  config.set("TURNSTILE_SECRET_KEY", "private-turnstile-secret")
+
+  const response = await siteConfig.GET()
+  assert.equal(response.status, 200)
+  assert.equal(response.headers.get("cache-control"), "no-store")
+  const body = await response.text()
+  assert.equal(body.includes("private-turnstile-secret"), false)
+
+  const payload = JSON.parse(body) as { turnstile: { enabled: boolean; siteKey: string; hasSecret: boolean } }
+  assert.equal(payload.turnstile.enabled, true)
+  assert.equal(payload.turnstile.siteKey, "public-site-key")
+  assert.equal(payload.turnstile.hasSecret, true)
+  assert.equal(Object.hasOwn(payload.turnstile, "secretKey"), false)
+
+  const carriesStoredSecret = (value: unknown): boolean => {
+    if (typeof value === "string") return value.includes("private-turnstile-secret")
+    if (Array.isArray(value)) return value.some(carriesStoredSecret)
+    if (value && typeof value === "object") return Object.values(value).some(carriesStoredSecret)
+    return false
+  }
+  assert.equal(carriesStoredSecret(payload), false)
+
+  const save = (secretKey: string) => siteConfig.POST(new Request(request(), {
+    method: "POST",
+    body: JSON.stringify({
+      defaultRole: "duke",
+      emailDomains: "example.com",
+      adminContact: "",
+      maxEmails: "10",
+      turnstile: { enabled: true, siteKey: "public-site-key", secretKey },
+    }),
+  }))
+
+  // A blank secret keeps the stored value, so the operator never has to retype it.
+  assert.equal((await save("")).status, 200)
+  assert.equal(config.get("TURNSTILE_SECRET_KEY"), "private-turnstile-secret")
+  assert.equal(config.get("TURNSTILE_ENABLED"), "true")
+  assert.equal(config.get("TURNSTILE_SITE_KEY"), "public-site-key")
+
+  // Enabling Turnstile still requires an effective secret.
+  config.delete("TURNSTILE_SECRET_KEY")
+  assert.equal((await save("")).status, 400)
+  assert.equal(config.has("TURNSTILE_SECRET_KEY"), false)
 })
 
 test("mailbox creation trims valid names and persists a normalized address", async () => {
@@ -120,6 +492,7 @@ test("mailbox creation enforces user domain access and leaves Emperor access unr
   }))
   assert.equal(allowed.status, 200)
 
+  config.set("MAX_EMAILS", "1")
   sessionRole = "emperor"
   const emperor = await generate.POST(new Request(request(), {
     method: "POST", body: JSON.stringify({ name: "emperor", domain: "example.com", expiryTime: 0 }),
@@ -223,11 +596,216 @@ test("approved webhook hosts can be saved and tested while other hosts remain bl
   assert.equal(deliveries, 1)
 })
 
+test("webhook configuration never returns the signing secret", async t => {
+  await t.test("configured webhook", async t => {
+    setWebhookEnvironment(t, "hooks.example.com")
+    sqlite.exec("INSERT INTO webhook(id,user_id,url,secret,enabled,created_at,updated_at) VALUES('w','owner','https://hooks.example.com/event','super-secret-signing-key',1,0,0)")
+
+    const response = await webhook.GET()
+    assert.equal(response.status, 200)
+    assert.equal(response.headers.get("cache-control"), "no-store")
+    const body = await response.text()
+    assert.equal(body.includes("super-secret-signing-key"), false)
+    assert.equal(body.includes('"secret"'), false)
+
+    const payload = JSON.parse(body) as { enabled: boolean; url: string; hasSecret: boolean; setupError?: string }
+    assert.equal(payload.enabled, true)
+    assert.equal(payload.url, "https://hooks.example.com/event")
+    assert.equal(payload.hasSecret, true)
+  })
+
+  await t.test("unconfigured webhook", async t => {
+    setWebhookEnvironment(t, "")
+    const payload = await (await webhook.GET()).json() as { enabled: boolean; url: string; hasSecret: boolean; setupError?: string }
+    assert.equal(payload.enabled, false)
+    assert.equal(payload.url, "")
+    assert.equal(payload.hasSecret, false)
+    assert.equal(payload.setupError, "setupRequired")
+  })
+})
+
+test("admin user lists reject invalid pagination instead of failing with a server error", async () => {
+  for (const query of ["page=abc", "page=0", "page=-1", "page=1e999", "pageSize=abc", "pageSize=0", "pageSize=51"]) {
+    const response = await rolesUsers.GET(new Request(`https://app.example.com/api/roles/users?${query}`))
+    assert.equal(response.status, 400, query)
+  }
+  const valid = await rolesUsers.GET(new Request("https://app.example.com/api/roles/users?page=1&pageSize=20"))
+  assert.equal(valid.status, 200)
+})
+
+test("malformed request bodies return HTTP 400 instead of a server error", async t => {
+  const promote = await import("../app/api/roles/promote/route")
+  const malformed = ["", "{", "null", "[]"]
+  for (const body of malformed) {
+    await t.test(`promote body ${body || "empty"}`, async () => {
+      const response = await promote.POST(new Request(request(), { method: "POST", body }))
+      assert.equal(response.status, 400)
+    })
+    await t.test(`user search body ${body || "empty"}`, async () => {
+      const response = await rolesUsers.POST(new Request(request(), { method: "POST", body }))
+      assert.equal(response.status, 400)
+    })
+    await t.test(`generate body ${body || "empty"}`, async () => {
+      config.set("EMAIL_DOMAINS", "example.com")
+      const response = await generate.POST(new Request(request(), { method: "POST", body }))
+      assert.equal(response.status, 400)
+    })
+  }
+})
+
 test("forged identity headers never replace a verified session or create one", async () => {
   requestHeaders.set("X-User-Id", "victim")
   assert.equal(await getUserId(), "owner")
   sessionId = undefined
   assert.equal(await getUserId(), undefined)
+})
+
+test("API key creation rejects malformed bodies without storing credentials", async t => {
+  for (const body of ['{', '', 'null', '[]', '0', '"name"', '{}',
+    '{"name":null}', '{"name":42}', '{"name":true}', '{"name":[]}', '{"name":{}}',
+    '{"name":""}', '{"name":"   "}']) {
+    await t.test(body || "empty body", async () => {
+      const response = await apiKeysRoute.POST(new Request("https://app.example.com/api/api-keys", {
+        method: "POST", body,
+      }))
+      assert.equal(response.status, 400)
+      assert.equal(typeof (await response.json() as { error: string }).error, "string")
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM api_keys").get()?.n, 0)
+    })
+  }
+})
+
+test("duplicate API key names return HTTP 409 without replacing or revealing existing credentials", async t => {
+  const create = (name: string) => apiKeysRoute.POST(new Request("https://app.example.com/api/api-keys", {
+    method: "POST", body: JSON.stringify({ name }),
+  }))
+  const initial = await create("Automation")
+  assert.equal(initial.status, 200)
+  const { key } = await initial.json() as { key: string }
+  sqlite.exec("UPDATE api_keys SET enabled = 0, expires_at = 0")
+  const before = sqlite.prepare("SELECT * FROM api_keys").all()
+  const logs = t.mock.method(console, "error", () => {})
+  const duplicate = await create("Automation")
+  assert.equal(duplicate.status, 409)
+  const body = await duplicate.json() as { code: string; error: string; key?: string }
+  assert.equal(body.code, "API_KEY_NAME_EXISTS")
+  assert.equal(typeof body.error, "string")
+  assert.equal(body.key, undefined)
+  assert.equal(JSON.stringify(body).includes(key), false)
+  assert.deepEqual(sqlite.prepare("SELECT * FROM api_keys").all(), before)
+  assert.equal(logs.mock.callCount(), 0)
+})
+
+test("API key name conflicts remain scoped to the owner", async () => {
+  sqlite.exec("INSERT INTO api_keys(id,user_id,name,key,enabled) VALUES('foreign','victim','Automation','other-test-key',1)")
+  const response = await apiKeysRoute.POST(new Request("https://app.example.com/api/api-keys", {
+    method: "POST", body: JSON.stringify({ name: "Automation" }),
+  }))
+  assert.equal(response.status, 200)
+  const { key } = await response.json() as { key: string }
+  assert.equal(sqlite.prepare("SELECT user_id FROM api_keys WHERE key = ?").get(key)?.user_id, "owner")
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM api_keys WHERE name = 'Automation'").get()?.n, 2)
+})
+
+test("API key updates reject non-booleans without changing stored state or access", async t => {
+  for (const initial of [false, true]) {
+    for (const body of ['{', '', 'null', '[]', '0', '"false"', '{}',
+      '{"enabled":null}', '{"enabled":"false"}', '{"enabled":"true"}',
+      '{"enabled":0}', '{"enabled":1}', '{"enabled":[]}', '{"enabled":{}}']) {
+      await t.test(`${initial}: ${body || "empty body"}`, async () => {
+        reset()
+        sqlite.prepare("INSERT INTO api_keys(id,user_id,name,key,enabled,expires_at) VALUES('key','owner','test','test-key',?,?)")
+          .run(Number(initial), Math.floor(Date.now() / 1000) + 3600)
+        const response = await apiKeyRoute.PATCH(new Request("https://app.example.com/api/api-keys/key", {
+          method: "PATCH", body,
+        }), { params: Promise.resolve({ id: "key" }) })
+        assert.equal(sqlite.prepare("SELECT enabled FROM api_keys WHERE id = 'key'").get()?.enabled, Number(initial))
+        assert.equal(response.status, 400)
+        requestHeaders.set("X-API-Key", "test-key")
+        assert.equal(await getUserId(PERMISSIONS.MANAGE_EMAIL), initial ? "owner" : undefined)
+      })
+    }
+  }
+})
+
+test("API key mutations preserve valid names, boolean toggles, and owner isolation", async t => {
+  const now = 1_800_000_000_000
+  t.mock.timers.enable({ apis: ["Date"], now })
+  const name = " Personal automation "
+  const created = await apiKeysRoute.POST(new Request("https://app.example.com/api/api-keys", {
+    method: "POST", body: JSON.stringify({ name }),
+  }))
+  assert.equal(created.status, 200)
+  assert.equal(created.headers.get("Cache-Control"), "no-store")
+  const { key } = await created.json() as { key: string }
+  const stored = sqlite.prepare("SELECT id, user_id, name, enabled, expires_at FROM api_keys WHERE key = ?").get(key)
+  assert.ok(stored)
+  assert.equal(stored.name, name)
+  assert.equal(stored.user_id, "owner")
+  assert.equal(stored.enabled, 1)
+  assert.equal(stored.expires_at, (now + 365 * 24 * 60 * 60 * 1000) / 1000)
+  const listed = await (await apiKeysRoute.GET()).json() as { apiKeys: Record<string, unknown>[] }
+  assert.equal(listed.apiKeys.length, 1)
+  assert.equal(listed.apiKeys[0].key, key)
+
+  const update = (id: string, enabled: boolean) => apiKeyRoute.PATCH(new Request("https://app.example.com/api/api-keys/key", {
+    method: "PATCH", body: JSON.stringify({ enabled }),
+  }), { params: Promise.resolve({ id }) })
+  requestHeaders.set("X-API-Key", key)
+  assert.equal(await getUserId(PERMISSIONS.MANAGE_EMAIL), "owner")
+  requestHeaders.delete("X-API-Key")
+  for (const enabled of [false, true]) {
+    assert.equal((await update(String(stored.id), enabled)).status, 200)
+    assert.equal(sqlite.prepare("SELECT enabled FROM api_keys WHERE key = ?").get(key)?.enabled, Number(enabled))
+    requestHeaders.set("X-API-Key", key)
+    assert.equal(await getUserId(PERMISSIONS.MANAGE_EMAIL), enabled ? "owner" : undefined)
+    requestHeaders.delete("X-API-Key")
+  }
+  sqlite.exec("INSERT INTO api_keys(id,user_id,name,key,enabled) VALUES('foreign','victim','other','other-key',0)")
+  assert.equal((await update("foreign", true)).status, 404)
+  assert.equal((await update("missing", true)).status, 404)
+  assert.equal(sqlite.prepare("SELECT enabled FROM api_keys WHERE id = 'foreign'").get()?.enabled, 0)
+  sessionId = undefined
+  assert.equal((await update(String(stored.id), false)).status, 403)
+  assert.equal(sqlite.prepare("SELECT enabled FROM api_keys WHERE key = ?").get(key)?.enabled, 1)
+})
+
+test("API key lists reveal stored keys only to the managing session owner and disable caching", async () => {
+  const expiresAt = Math.floor(Date.now() / 1000) + 3600
+  sqlite.prepare("INSERT INTO api_keys(id,user_id,name,key,created_at,expires_at) VALUES('owner-key','owner','Owner key','mk_owner_secret',100,?),('victim-key','victim','Victim key','mk_victim_secret',100,?)")
+    .run(expiresAt, expiresAt)
+  sqlite.exec("INSERT INTO user_role(user_id,role_id) VALUES('victim','duke')")
+  const request = new Request("https://app.example.com/api/api-keys")
+
+  const ownerResponse = await apiKeysRoute.GET(request)
+  assert.equal(ownerResponse.status, 200)
+  assert.equal(ownerResponse.headers.get("Cache-Control"), "no-store")
+  const ownerBody = await ownerResponse.json() as { apiKeys: Array<{ id: string; key: string }> }
+  assert.deepEqual(ownerBody.apiKeys.map(({ id, key }) => ({ id, key })), [
+    { id: "owner-key", key: "mk_owner_secret" },
+  ])
+
+  requestHeaders.set("X-API-Key", "mk_owner_secret")
+  const apiKeyResponse = await apiKeysRoute.GET(request)
+  assert.equal(apiKeyResponse.status, 403)
+  assert.equal(apiKeyResponse.headers.get("Cache-Control"), "no-store")
+  assert.equal(await getUserId(PERMISSIONS.MANAGE_API_KEY), undefined)
+  requestHeaders.delete("X-API-Key")
+
+  sessionId = "victim"
+  const victimResponse = await apiKeysRoute.GET(request)
+  assert.equal(victimResponse.status, 200)
+  assert.equal(victimResponse.headers.get("Cache-Control"), "no-store")
+  const victimBody = await victimResponse.json() as { apiKeys: Array<{ id: string; key: string }> }
+  assert.deepEqual(victimBody.apiKeys.map(({ id, key }) => ({ id, key })), [
+    { id: "victim-key", key: "mk_victim_secret" },
+  ])
+
+  sqlite.exec("UPDATE user_role SET role_id = 'knight' WHERE user_id = 'victim'")
+  assert.equal(await getUserId(PERMISSIONS.MANAGE_API_KEY), undefined)
+  const unauthorizedResponse = await apiKeysRoute.GET(request)
+  assert.equal(unauthorizedResponse.status, 403)
+  assert.equal(unauthorizedResponse.headers.get("Cache-Control"), "no-store")
 })
 
 test("API keys lose access after demotion, disablement or expiry", async () => {
@@ -242,6 +820,207 @@ test("API keys lose access after demotion, disablement or expiry", async () => {
   assert.equal(await getUserId(), undefined)
 })
 
+test("mailbox deletion preserves all records on failure and cascades with one delete on success", async t => {
+  for (const failure of [false, true]) {
+    await t.test(failure ? "mailbox delete fails" : "successful cascade", async t => {
+      reset()
+      sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('other','victim@example.com','victim',0,?)").run(Date.now() + 60_000)
+      sqlite.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES('other-message','other','Other','other body',100,200,'received')")
+      sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('share','email','mailbox-token',0),('other-share','other','other-mailbox-token',0)")
+      sqlite.exec("INSERT INTO message_share(id,message_id,token,created_at) VALUES('message-share','message','message-token',0),('other-message-share','other-message','other-message-token',0)")
+      const tables = ["email", "message", "email_share", "message_share", "message_arrival"]
+      const snapshot = () => Object.fromEntries(tables.map(table => [table, sqlite.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all()]))
+      const before = snapshot()
+      const deletes: string[] = []
+      const originalPrepare = d1.prepare.bind(d1)
+      t.mock.method(d1, "prepare", (sql: string) => {
+        if (sql.toLowerCase().startsWith("delete from")) deletes.push(sql)
+        if (failure && sql.toLowerCase().startsWith('delete from "email"')) throw new Error("Synthetic mailbox delete failure")
+        return originalPrepare(sql)
+      })
+      if (failure) t.mock.method(console, "error", () => {})
+      const response = await mailbox.DELETE(request(), sendParams())
+      assert.equal(response.status, failure ? 500 : 200)
+      if (failure) {
+        assert.deepEqual(snapshot(), before)
+      } else {
+        assert.deepEqual(await response.json(), { success: true })
+        assert.equal(deletes.length, 1)
+        assert.match(deletes[0], /^delete from "email"/i)
+        assert.deepEqual(sqlite.prepare("SELECT id FROM email").all().map(row => row.id), ["other"])
+        assert.deepEqual(sqlite.prepare("SELECT id FROM message").all().map(row => row.id), ["other-message"])
+        assert.deepEqual(sqlite.prepare("SELECT id FROM email_share").all().map(row => row.id), ["other-share"])
+        assert.deepEqual(sqlite.prepare("SELECT id FROM message_share").all().map(row => row.id), ["other-message-share"])
+        assert.deepEqual(sqlite.prepare("SELECT message_id FROM message_arrival").all().map(row => row.message_id), ["other-message"])
+      }
+    })
+  }
+})
+
+test("bulk mailbox deletion requires permission and rejects invalid or oversized requests", async () => {
+  sessionId = undefined
+  assert.equal((await bulkMailboxes.DELETE(bulkDeleteRequest(["email"]))).status, 401)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 1)
+
+  sessionId = "victim"
+  assert.equal((await bulkMailboxes.DELETE(bulkDeleteRequest(["email"]))).status, 401)
+  sessionId = "owner"
+
+  const invalidBodies = [
+    "not-json",
+    JSON.stringify({ ids: [] }),
+    JSON.stringify({ ids: ["email", "email"] }),
+    JSON.stringify({ ids: [""] }),
+    JSON.stringify({ ids: Array.from({ length: 41 }, (_, index) => `email-${index}`) }),
+    JSON.stringify({ ids: ["email"], ignored: "x".repeat(9 * 1024) }),
+  ]
+  for (const body of invalidBodies) {
+    const response = await bulkMailboxes.DELETE(new Request("https://app.example.com/api/emails/bulk", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body,
+    }))
+    assert.equal(response.status, 400)
+  }
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 1)
+})
+
+test("bulk mailbox deletion keeps the maximum D1 bind count below 100", async t => {
+  const ids = ["email"]
+  const insert = sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?, 'owner',0,?)")
+  for (let index = 1; index < 40; index += 1) {
+    const id = `bulk-${index}`
+    ids.push(id)
+    insert.run(id, `${id}@example.com`, Date.now() + 60_000)
+  }
+
+  const bindCounts: number[] = []
+  const originalPrepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (statement: string) => {
+    const prepared = originalPrepare(statement)
+    return new Proxy(prepared, {
+      get(target, property) {
+        if (property === "bind") {
+          return (...values: Parameters<typeof target.bind>) => {
+            bindCounts.push(values.length)
+            return target.bind(...values)
+          }
+        }
+        const member = Reflect.get(target, property, target)
+        return typeof member === "function" ? member.bind(target) : member
+      },
+    })
+  })
+
+  const response = await bulkMailboxes.DELETE(bulkDeleteRequest(ids))
+  assert.equal(response.status, 200)
+  assert.equal(Math.max(...bindCounts), 85)
+  assert.ok(Math.max(...bindCounts) <= 100)
+  assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email").get()?.n, 0)
+})
+
+test("bulk mailbox deletion refuses mixed ownership, expired accounts and Catch-all mailboxes without partial deletion", async () => {
+  const tables = ["email", "message", "email_share", "message_share", "message_arrival"]
+  const snapshot = () => Object.fromEntries(tables.map(table => [table, sqlite.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all()]))
+
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('active','active@example.com','owner',0,?)").run(Date.now() + 60_000)
+  sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('foreign','victim@example.com','victim',0,?)").run(Date.now() + 60_000)
+  sqlite.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES('foreign-message','foreign','Other','other body',100,200,'received')")
+  sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('owner-share','email','owner-token',0),('foreign-share','foreign','foreign-token',0)")
+  sqlite.exec("INSERT INTO message_share(id,message_id,token,created_at) VALUES('owner-message-share','message','owner-message-token',0),('foreign-message-share','foreign-message','foreign-message-token',0)")
+  const beforeMixedOwnership = snapshot()
+  const mixedOwnership = await bulkMailboxes.DELETE(bulkDeleteRequest(["email", "foreign"]))
+  assert.equal(mixedOwnership.status, 403)
+  assert.deepEqual(snapshot(), beforeMixedOwnership)
+
+  sqlite.exec("UPDATE email SET expires_at = 0 WHERE id = 'email'")
+  const beforeExpired = snapshot()
+  const expired = await bulkMailboxes.DELETE(bulkDeleteRequest(["email", "active"]))
+  assert.equal(expired.status, 403)
+  assert.deepEqual(snapshot(), beforeExpired)
+  sqlite.prepare("UPDATE email SET expires_at = ? WHERE id = 'email'").run(Date.now() + 60_000)
+
+  sqlite.exec("INSERT INTO catch_all_mailbox(domain,email_id) VALUES('example.com','email')")
+  const beforeRegisteredCatchAll = snapshot()
+  const registeredCatchAll = await bulkMailboxes.DELETE(bulkDeleteRequest(["email"]))
+  assert.equal(registeredCatchAll.status, 403)
+  assert.deepEqual(snapshot(), beforeRegisteredCatchAll)
+
+  sqlite.exec("DELETE FROM catch_all_mailbox")
+  config.set("CATCHALL_EMAIL", JSON.stringify({ "example.com": { address: "owner@example.com", enabled: true } }))
+  const beforeLegacyCatchAll = snapshot()
+  const legacyCatchAll = await bulkMailboxes.DELETE(bulkDeleteRequest(["email"]))
+  assert.equal(legacyCatchAll.status, 403)
+  assert.deepEqual(snapshot(), beforeLegacyCatchAll)
+})
+
+test("bulk mailbox deletion rechecks ownership in its atomic delete and cascades once for all selected accounts", async t => {
+  const seed = () => {
+    reset()
+    sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('second','second@example.com','owner',0,?)").run(Date.now() + 60_000)
+    sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES('foreign','victim@example.com','victim',0,?)").run(Date.now() + 60_000)
+    sqlite.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES('second-message','second','Second','second body',100,200,'received'),('foreign-message','foreign','Other','other body',100,200,'received')")
+    sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('share','email','mailbox-token',0),('second-share','second','second-mailbox-token',0),('foreign-share','foreign','foreign-mailbox-token',0)")
+    sqlite.exec("INSERT INTO message_share(id,message_id,token,created_at) VALUES('message-share','message','message-token',0),('second-message-share','second-message','second-message-token',0),('foreign-message-share','foreign-message','foreign-message-token',0)")
+  }
+  const tables = ["email", "message", "email_share", "message_share", "message_arrival"]
+  const snapshot = () => Object.fromEntries(tables.map(table => [table, sqlite.prepare(`SELECT * FROM "${table}" ORDER BY 1`).all()]))
+
+  seed()
+  const beforeRace = snapshot()
+  const originalPrepare = d1.prepare.bind(d1)
+  let changedOwner = false
+  const racePrepare = t.mock.method(d1, "prepare", (statement: string) => {
+    if (!changedOwner && /^delete from ["`]?email["`]?/i.test(statement.trim())) {
+      changedOwner = true
+      sqlite.exec("UPDATE email SET userId = 'victim' WHERE id = 'email'")
+    }
+    return originalPrepare(statement)
+  })
+  const raced = await bulkMailboxes.DELETE(bulkDeleteRequest(["email", "second"]))
+  assert.equal(changedOwner, true)
+  assert.equal(raced.status, 403)
+  const afterRace = snapshot()
+  assert.deepEqual(afterRace.email.map(({ id, address }) => ({ id, address })), beforeRace.email.map(({ id, address }) => ({ id, address })))
+  for (const table of tables.slice(1)) assert.deepEqual(afterRace[table], beforeRace[table])
+  assert.equal(sqlite.prepare("SELECT userId FROM email WHERE id = 'email'").get()?.userId, "victim")
+  // The simulated owner change happened immediately before DELETE prepared.
+  // The atomic eligibility guard must leave every selected resource in place.
+  racePrepare.mock.restore()
+  seed()
+  const beforeFailure = snapshot()
+  const deletes: string[] = []
+  const failurePrepare = t.mock.method(d1, "prepare", (statement: string) => {
+    if (/^delete from /i.test(statement.trim())) deletes.push(statement)
+    if (/^delete from ["`]?email["`]?/i.test(statement.trim())) throw new Error("Synthetic bulk mailbox delete failure")
+    return originalPrepare(statement)
+  })
+  t.mock.method(console, "error", () => {})
+  const failed = await bulkMailboxes.DELETE(bulkDeleteRequest(["email", "second"]))
+  assert.equal(failed.status, 500)
+  assert.deepEqual(snapshot(), beforeFailure)
+  assert.equal(deletes.length, 1)
+
+  failurePrepare.mock.restore()
+  seed()
+  const successfulDeletes: string[] = []
+  t.mock.method(d1, "prepare", (statement: string) => {
+    if (/^delete from /i.test(statement.trim())) successfulDeletes.push(statement)
+    return originalPrepare(statement)
+  })
+  const succeeded = await bulkMailboxes.DELETE(bulkDeleteRequest(["email", "second"]))
+  assert.equal(succeeded.status, 200)
+  const result = await succeeded.json() as { success: boolean; deletedIds: string[] }
+  assert.equal(result.success, true)
+  assert.deepEqual(new Set(result.deletedIds), new Set(["email", "second"]))
+  assert.equal(successfulDeletes.length, 1)
+  assert.deepEqual(sqlite.prepare("SELECT id FROM email ORDER BY id").all().map(row => row.id), ["foreign"])
+  assert.deepEqual(sqlite.prepare("SELECT id FROM message ORDER BY id").all().map(row => row.id), ["foreign-message"])
+  assert.deepEqual(sqlite.prepare("SELECT id FROM email_share ORDER BY id").all().map(row => row.id), ["foreign-share"])
+  assert.deepEqual(sqlite.prepare("SELECT id FROM message_share ORDER BY id").all().map(row => row.id), ["foreign-message-share"])
+  assert.deepEqual(sqlite.prepare("SELECT message_id FROM message_arrival").all().map(row => row.message_id), ["foreign-message"])
+})
+
 test("expired mailboxes reject message reads, shares and sends before external calls", async t => {
   sqlite.exec("UPDATE email SET expires_at = 0")
   const provider = t.mock.method(globalThis, "fetch", async () => { throw new Error("Must not contact provider") })
@@ -250,6 +1029,69 @@ test("expired mailboxes reject message reads, shares and sends before external c
   assert.equal((await send.POST(new Request(request(), { method: "POST", body: '{"to":"a@example.com","subject":"s","content":"c"}' }), params())).status, 404)
   assert.equal(provider.mock.callCount(), 0)
   assert.equal(usedQuota(), 0)
+})
+
+test("share creation rejects invalid expiry requests without persisting links", async t => {
+  for (const [name, route] of [["mailbox", shares], ["message", messageShares]] as const) {
+    await t.test(name, async t => {
+      for (const body of [
+        '{', '', 'null', '[]', '0', '"invalid"',
+        '{"expiresIn":-1}', '{"expiresIn":-0.5}', '{"expiresIn":0.5}',
+        '{"expiresIn":"86400000"}', '{"expiresIn":"0"}',
+        '{"expiresIn":null}', '{"expiresIn":false}', '{"expiresIn":true}',
+        '{"expiresIn":[]}', '{"expiresIn":{}}',
+        '{"expiresIn":1e309}', '{"expiresIn":9007199254740992}',
+        '{"expiresIn":8640000000000000}',
+      ]) {
+        await t.test(body || "empty body", async () => {
+          const response = await route.POST(new Request(request(), { method: "POST", body }), params())
+          assert.equal(response.status, 400)
+          assert.equal(typeof (await response.json() as { error: string }).error, "string")
+          assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email_share").get()?.n, 0)
+          assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM message_share").get()?.n, 0)
+        })
+      }
+    })
+  }
+})
+
+test("share creation preserves permanent defaults and exact valid expiry timestamps", async t => {
+  const now = 1_800_000_000_000
+  t.mock.timers.enable({ apis: ["Date"], now })
+  for (const [name, route, table] of [["mailbox", shares, "email_share"], ["message", messageShares, "message_share"]] as const) {
+    await t.test(name, async t => {
+      for (const expiresIn of [undefined, 0, 1, 86_400_000, 8_640_000_000_000_000 - now]) {
+        await t.test(String(expiresIn), async () => {
+          reset()
+          const response = await route.POST(new Request(request(), {
+            method: "POST", body: JSON.stringify({ expiresIn }),
+          }), params())
+          assert.equal(response.status, 201)
+          const body = await response.json() as { id: string; token: string; expiresAt: string | null }
+          const expected = expiresIn ? now + expiresIn : null
+          assert.equal(body.expiresAt, expected === null ? null : new Date(expected).toISOString())
+          const stored = sqlite.prepare(`SELECT token, expires_at FROM ${table} WHERE id = ?`).get(body.id)
+          assert.equal(stored?.token, body.token)
+          assert.equal(stored?.expires_at, expected)
+        })
+      }
+    })
+  }
+})
+
+test("share creation preserves authentication and ownership checks", async t => {
+  for (const [name, route, deniedStatus] of [["mailbox", shares, 404], ["message", messageShares, 403]] as const) {
+    await t.test(name, async () => {
+      reset()
+      sessionId = undefined
+      assert.equal((await route.POST(new Request(request(), { method: "POST", body: '{}' }), params())).status, 401)
+      sessionId = "owner"
+      sqlite.exec("UPDATE email SET userId = 'victim'")
+      assert.equal((await route.POST(new Request(request(), { method: "POST", body: '{}' }), params())).status, deniedStatus)
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM email_share").get()?.n, 0)
+      assert.equal(sqlite.prepare("SELECT COUNT(*) AS n FROM message_share").get()?.n, 0)
+    })
+  }
 })
 
 test("sent-message detail checks current send permission and uses sent_at", async () => {
@@ -407,6 +1249,68 @@ test("public message shares stop exposing content when the share or mailbox expi
       }
     })
   }
+})
+
+test("public mailbox endpoints reject shares and mailboxes at the exact expiry boundary", async t => {
+  const now = 1_800_000_000_000
+  t.mock.timers.enable({ apis: ["Date"], now })
+  for (const [endpoint, route] of [["metadata", publicMailboxInfo], ["messages", publicMailboxMessages], ["detail", publicMailboxMessage]] as const) {
+    for (const scenario of ["active", "share expires now", "share expired", "mailbox expires now", "mailbox expired"]) {
+      await t.test(`${endpoint}: ${scenario}`, async () => {
+        reset()
+        sessionId = undefined
+        sqlite.prepare("INSERT INTO email_share(id,email_id,token,created_at,expires_at) VALUES('share','email','mailbox-token',0,?)").run(now + 1)
+        if (scenario.startsWith("share")) sqlite.prepare("UPDATE email_share SET expires_at = ?").run(now - Number(scenario === "share expired"))
+        if (scenario.startsWith("mailbox")) sqlite.prepare("UPDATE email SET expires_at = ?").run(now - Number(scenario === "mailbox expired"))
+        const response = await route.GET(request(), { params: Promise.resolve({ token: "mailbox-token", messageId: "message" }) })
+        assert.equal(response.status, scenario === "active" ? 200 : 410)
+        const body = await response.json() as Record<string, unknown>
+        if (scenario !== "active") {
+          assert.equal(typeof body.error, "string")
+          for (const field of ["email", "messages", "message"]) assert.equal(Object.hasOwn(body, field), false)
+          assert.equal(JSON.stringify(body).includes("secret"), false)
+        }
+      })
+    }
+  }
+})
+
+test("public mailbox lists query only message summaries and preserve pagination", async t => {
+  sqlite.exec("INSERT INTO email_share(id,email_id,token,created_at) VALUES('share','email','mailbox-token',0)")
+  sqlite.prepare("UPDATE message SET content = ?, html = ?").run("large private body ".repeat(10_000), "<p>large private HTML</p>".repeat(10_000))
+  const insert = sqlite.prepare("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES(?,'email',?,'body',100,200,'received')")
+  for (let index = 0; index < 20; index++) insert.run(`message-${String(index).padStart(2, "0")}`, `Subject ${index}`)
+  sqlite.exec("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES('sent','email','Private sent','body',300,300,'sent')")
+  const queries: string[] = []
+  const originalPrepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (sql: string) => {
+    if (sql.toLowerCase().includes('from "message"')) queries.push(sql)
+    return originalPrepare(sql)
+  })
+  const getPage = (cursor = "") => publicMailboxMessages.GET(new Request(`https://app.example.com/api/shared/mailbox-token/messages?cursor=${encodeURIComponent(cursor)}`), {
+    params: Promise.resolve({ token: "mailbox-token" }),
+  })
+  const response = await getPage()
+  assert.equal(response.status, 200)
+  const first = await response.json() as { messages: Record<string, unknown>[]; total: number; nextCursor: string }
+  assert.equal(first.total, 21)
+  assert.equal(first.messages.length, 20)
+  assert.equal(first.messages[0].id, "message-19")
+  assert.ok(first.nextCursor)
+  const next = await getPage(first.nextCursor)
+  assert.equal(next.status, 200)
+  const second = await next.json() as { messages: Record<string, unknown>[]; total: number; nextCursor: null }
+  assert.equal(second.total, 21)
+  assert.equal(second.nextCursor, null)
+  assert.deepEqual(second.messages.map(message => message.id), ["message"])
+  const combined = [...first.messages, ...second.messages]
+  assert.equal(new Set(combined.map(message => message.id)).size, 21)
+  for (const message of combined) {
+    assert.equal(Object.hasOwn(message, "content"), false)
+    assert.equal(Object.hasOwn(message, "html"), false)
+  }
+  assert.ok(queries.length >= 2)
+  for (const sql of queries) assert.doesNotMatch(sql, /"(?:content|html)"/)
 })
 
 test("mailbox shares do not expose sent messages through the detail endpoint", async () => {

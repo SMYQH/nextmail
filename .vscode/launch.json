@@ -1,0 +1,138 @@
+{
+  // Debug configurations for this repository.
+  //
+  // The dev server serves the app from workerd (OpenNext `getPlatformProxy`),
+  // so `app/**` route handlers, `proxy.ts` and the i18n bootstrap run inside
+  // the Worker isolate and are NOT reached by the Node debugger. Use
+  // "Next.js: debug client-side (Chrome)" for the browser code and the
+  // workerd inspector for the Worker code. The Node configurations below cover
+  // the Node side: `next.config.ts`, `scripts/**` and the Node test suite.
+  //
+  // `type` values follow the bundled js-debug extension: "node" and "chrome"
+  // are the current names, "pwa-node" and "pwa-chrome" are the deprecated ones.
+  // A compound lives in the top level "compounds" array, not in "configurations".
+  "version": "0.2.0",
+  "configurations": [
+    {
+      // Runs `next dev` under the Node debugger and opens the browser once the
+      // server prints its local address. Same command as `npm run dev`, minus
+      // the npm wrapper, so the ignored Wrangler configs are produced by the
+      // "wrangler: config" task instead of the `predev` hook.
+      // "serverReadyAction" is provided by the built-in debug-server-ready
+      // extension and needs the integrated terminal.
+      "name": "Next.js: debug server + browser",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--import",
+        "./scripts/deploy/preload-app-env.ts"
+      ],
+      "program": "${workspaceFolder}/node_modules/next/dist/bin/next",
+      "args": ["dev", "--webpack"],
+      "preLaunchTask": "wrangler: config",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"],
+      "serverReadyAction": {
+        "pattern": "- Local:\\s+(http://localhost:\\d+)",
+        "uriFormat": "%s",
+        "action": "openExternally"
+      }
+    },
+    {
+      // Attaches Chrome to the running dev server for client-side breakpoints.
+      // The dev server must be running (task "dev: server" or `npm run dev`).
+      "name": "Next.js: debug client-side (Chrome)",
+      "type": "chrome",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "url": "http://localhost:3000",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "wait: dev server"
+    },
+    {
+      // Debugs one Node test file. Test isolation is disabled so the file runs
+      // inside the debugged process and breakpoints are hit.
+      "name": "Node: debug current test file",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "node",
+      "runtimeArgs": [
+        "--import",
+        "tsx",
+        "--experimental-test-module-mocks",
+        "--experimental-test-isolation=none",
+        "--test"
+      ],
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Debugs the whole Node suite. `npm test` spawns the test runner, so the
+      // debugger attaches to the child processes as well.
+      "name": "Node: debug all tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Debugs a standalone TypeScript script, for example scripts/deploy/*.ts.
+      "name": "Node: debug current script",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["--import", "tsx"],
+      "program": "${file}",
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Opens the Playwright Inspector for the browser suite. The `pretest:browser`
+      // hook generates the ignored Wrangler configs before the run starts.
+      "name": "Playwright: debug browser tests",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "test:browser", "--", "--debug"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    },
+    {
+      // Runs the cleanup Worker locally. workerd has no VS Code breakpoints; open
+      // http://127.0.0.1:9229/json/list in Chrome DevTools to inspect it.
+      "name": "Worker: debug cleanup worker",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:cleanup", "--", "--inspector-port", "9229"],
+      "autoAttachChildProcesses": true,
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**", "**/node_modules/**"]
+    }
+  ],
+  "compounds": [
+    {
+      // Server plus browser in one session.
+      "name": "Next.js: debug server + client",
+      "preLaunchTask": "wrangler: config",
+      "configurations": [
+        "Next.js: debug server + browser",
+        "Next.js: debug client-side (Chrome)"
+      ]
+    }
+  ]
+}

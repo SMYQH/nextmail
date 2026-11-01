@@ -87,7 +87,7 @@ export function ProfileCard({ user, canInitializeEmperor }: ProfileCardProps) {
           </div>
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-xl font-bold truncate">{user.name}</h2>
+              <h2 className="text-xl font-bold truncate" title={user.name || undefined}>{user.name}</h2>
               {!!user?.providers?.length && (
                 <div className="flex gap-2">
                   {user.providers.map((provider) => {
@@ -107,7 +107,7 @@ export function ProfileCard({ user, canInitializeEmperor }: ProfileCardProps) {
                 </div>
               )}
             </div>
-            <p className="text-sm text-muted-foreground truncate mt-1">
+            <p className="text-sm text-muted-foreground truncate mt-1" title={user.email ? user.email : `${t("name")}: ${user.username}`}>
               {
                 user.email ? user.email : `${t("name")}: ${user.username}`
               }

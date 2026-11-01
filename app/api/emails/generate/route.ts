@@ -4,7 +4,7 @@ import { NextResponse } from "next/server"
 import { nanoid } from "nanoid"
 import { createDb } from "@/lib/db"
 import { emails } from "@/lib/schema"
-import { eq, and, gt, sql } from "drizzle-orm"
+import { eq, and, gt, or, sql } from "drizzle-orm"
 import { EXPIRY_OPTIONS } from "@/types/email"
 import { EMAIL_CONFIG } from "@/config"
 import { getCloudflareContext } from "@opennextjs/cloudflare"
@@ -14,6 +14,8 @@ import { ROLES } from "@/lib/permissions"
 import { normalizeEmailDomains } from "@/lib/email-domains"
 import { getAvailableEmailDomains } from "@/lib/user-email-domain-access"
 import { isValidMailboxName } from "@/lib/mailbox-name"
+import { parsePositiveSafeInteger } from "@/lib/max-emails"
+import { INSERT_MAILBOX_WITH_LIMIT_SQL } from "@/lib/database-statements"
 
 
 export async function POST(request: Request) {
@@ -23,10 +25,12 @@ export async function POST(request: Request) {
   const userId = await getUserId(PERMISSIONS.MANAGE_EMAIL)
   if (!userId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
   const userRole = await getUserRole(userId!)
+  let maxEmails = 0
 
   try {
     if (userRole !== ROLES.EMPEROR) {
-      const maxEmails = await env.SITE_CONFIG.get("MAX_EMAILS") || EMAIL_CONFIG.MAX_ACTIVE_EMAILS.toString()
+      const storedMaxEmails = await env.SITE_CONFIG.get("MAX_EMAILS")
+      maxEmails = parsePositiveSafeInteger(storedMaxEmails) ?? EMAIL_CONFIG.MAX_ACTIVE_EMAILS
       const activeEmailsCount = await db
         .select({ count: sql<number>`count(*)` })
         .from(emails)
@@ -37,7 +41,7 @@ export async function POST(request: Request) {
           )
         )
       
-      if (Number(activeEmailsCount[0].count) >= Number(maxEmails)) {
+      if (Number(activeEmailsCount[0].count) >= maxEmails) {
         return NextResponse.json(
           { error: `已达到最大邮箱数量限制 (${maxEmails})` },
           { status: 403 }
@@ -45,13 +49,20 @@ export async function POST(request: Request) {
       }
     }
 
-    const { name, expiryTime, domain } = await request.json<{ 
+    const body = await request.json().catch(() => null) as {
       name?: unknown
-      expiryTime: number
-      domain: string
-    }>()
+      expiryTime?: unknown
+      domain?: unknown
+    } | null
+    if (!body || typeof body !== "object") {
+      return NextResponse.json(
+        { error: "无效的请求格式" },
+        { status: 400 }
+      )
+    }
+    const { name, expiryTime, domain } = body
 
-    if (!EXPIRY_OPTIONS.some(option => option.value === expiryTime)) {
+    if (typeof expiryTime !== "number" || !EXPIRY_OPTIONS.some(option => option.value === expiryTime)) {
       return NextResponse.json(
         { error: "无效的过期时间" },
         { status: 400 }
@@ -101,26 +112,43 @@ export async function POST(request: Request) {
     }
 
     const now = new Date()
-    const expires = expiryTime === 0 
+    const expires = expiryTime === 0
       ? new Date('9999-01-01T00:00:00.000Z')
       : new Date(now.getTime() + expiryTime)
-    
-    const emailData: typeof emails.$inferInsert = {
-      address,
-      createdAt: now,
-      expiresAt: expires,
-      userId: userId!
+    const id = crypto.randomUUID()
+
+    const result = await env.DB.prepare(INSERT_MAILBOX_WITH_LIMIT_SQL)
+      .bind(
+        id,
+        address,
+        userId!,
+        now.getTime(),
+        expires.getTime(),
+        maxEmails,
+        userId!,
+        now.getTime(),
+        maxEmails,
+      )
+      .first<{ id: string; address: string }>()
+    if (!result) {
+      const concurrentConflict = await db.query.emails.findFirst({
+        where: or(eq(emails.id, id), eq(sql`LOWER(${emails.address})`, address)),
+      })
+      if (concurrentConflict) {
+        return NextResponse.json({ error: "Email address already exists" }, { status: 409 })
+      }
+      if (userRole !== ROLES.EMPEROR) {
+        return NextResponse.json(
+          { error: `已达到最大邮箱数量限制 (${maxEmails})` },
+          { status: 403 },
+        )
+      }
+      return NextResponse.json({ error: "Email address already exists" }, { status: 409 })
     }
-    
-    const result = await db.insert(emails)
-      .values(emailData)
-      .onConflictDoNothing()
-      .returning({ id: emails.id, address: emails.address })
-    if (!result.length) return NextResponse.json({ error: "Email address already exists" }, { status: 409 })
-    
-    return NextResponse.json({ 
-      id: result[0].id,
-      email: result[0].address 
+
+    return NextResponse.json({
+      id: result.id,
+      email: result.address,
     })
   } catch (error) {
     console.error('Failed to generate email:', safeErrorMetadata(error))

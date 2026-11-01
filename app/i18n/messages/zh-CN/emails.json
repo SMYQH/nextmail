@@ -28,6 +28,17 @@
     "deleteDescription": "确定要删除邮箱 {email} 吗？此操作将同时删除该邮箱中的所有邮件，且不可恢复。",
     "deleteSuccess": "邮箱已删除",
     "deleteFailed": "删除邮箱失败",
+    "selectMailbox": "选择要删除的邮箱：{email}",
+    "selectedCount": "已选择 {count} 个",
+    "maxSelected": "每次最多选择 40 个邮箱。",
+    "clearSelection": "清除选择",
+    "deleteSelected": "删除所选（{count}）",
+    "bulkDeleteConfirm": "确认删除所选邮箱？",
+    "bulkDeleteDescription": "确定删除所选的 {count} 个邮箱及其中所有邮件和分享链接吗？此操作无法撤销。",
+    "bulkDeleteSuccess": "已成功删除 {count} 个邮箱",
+    "bulkDeleteFailed": "无法确认删除结果。请刷新邮箱列表后重试；当前选择已保留。",
+    "bulkDeleteUnavailable": "一个或多个所选邮箱已不可用或无法删除。没有邮箱被删除，请刷新后重试。",
+    "bulkDeleting": "正在删除…",
     "error": "错误",
     "success": "成功",
     "domainFilter": "按域名筛选邮箱",
@@ -133,6 +144,7 @@
     "deleteFailed": "删除失败",
     "createSuccess": "分享链接创建成功",
     "createFailed": "创建分享链接失败",
+    "loadFailed": "加载分享链接失败",
     "shareButton": "分享"
   },
   "shareMessage": {
@@ -163,6 +175,7 @@
     "deleteFailed": "删除失败",
     "createSuccess": "分享链接创建成功",
     "createFailed": "创建分享链接失败",
+    "loadFailed": "加载分享链接失败",
     "shareButton": "分享邮件"
   },
   "shared": {
