@@ -5,7 +5,7 @@ Newest findings appear first. Each row records only the issue and current dispos
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
 | 181 | The Windows worker build intermittently fails while collecting build traces. | Open. |
-| 180 | The Worker keeps an outdated compatibility date. | Resolved locally. |
+| 180 | The Worker keeps an outdated compatibility date. | Open. |
 | 179 | The Worker build reports a nullish-coalescing warning from the bundled credential schema. | Resolved. |
 | 178 | The deployed Worker returns HTTP 500 for every page. | Resolved. |
 | 177 | The deploy environment test inherits the CI runner flag and fails in GitHub Actions. | Resolved. |
