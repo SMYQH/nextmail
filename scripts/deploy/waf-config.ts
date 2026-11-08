@@ -93,6 +93,16 @@ function cloudflareErrorStatus(error: unknown) {
   return typeof status === "number" ? ` (HTTP ${status})` : ""
 }
 
+function cloudflareErrorCodes(error: unknown) {
+  if (!error || typeof error !== "object" || !("errors" in error)) return ""
+  const errors = (error as { errors?: unknown }).errors
+  if (!Array.isArray(errors)) return ""
+  const codes = [...new Set(errors
+    .map(item => item && typeof item === "object" && "code" in item ? (item as { code?: unknown }).code : undefined)
+    .filter((code): code is number => typeof code === "number"))]
+  return codes.length ? ` (Cloudflare error codes: ${codes.join(", ")})` : ""
+}
+
 async function getEntryPoint(api: WafEntryPointApi, zoneId: string) {
   try {
     return await api.getEntryPoint(zoneId)
@@ -108,11 +118,19 @@ export async function configureOpenApiWaf(
 ): Promise<void> {
   const current = await getEntryPoint(api, target.zoneId)
   const managedRefs = new Set([OPENAPI_WAF_RULE_REF, OPENAPI_WAF_VERIFY_RULE_REF])
+  const expectedRules = createOpenApiWafRules(target.hostname, verificationSecret)
+
+  // PUT replaces the complete entry-point ruleset. Cloudflare can reject that
+  // request when unrelated rules leave the phase above its current rule limit,
+  // even if NextMail's rules already have the desired configuration. Keep a
+  // valid existing configuration untouched so redeployments remain idempotent.
+  if (isConfiguredOpenApiWaf(current?.rules ?? [], expectedRules)) return
+
   const currentManagedRules = new Map((current?.rules ?? []).filter(rule => rule.ref && managedRefs.has(rule.ref)).map(rule => [rule.ref!, rule]))
   const preservedRules = (current?.rules ?? [])
     .filter(rule => !rule.ref || !managedRefs.has(rule.ref))
     .map(stripServerManagedRuleFields)
-  const managedRules = createOpenApiWafRules(target.hostname, verificationSecret).map(rule => {
+  const managedRules = expectedRules.map(rule => {
     const existingId = currentManagedRules.get(rule.ref!)?.id
     return existingId ? { ...rule, id: existingId } : rule
   })
@@ -124,10 +142,18 @@ export async function configureOpenApiWaf(
       rules: [...managedRules, ...preservedRules],
     })
   } catch (error) {
-    throw new Error(`Cloudflare WAF ruleset update failed${cloudflareErrorStatus(error)}. Confirm the token has WAF: Edit permission for this Zone.`)
+    throw new Error(`Cloudflare WAF ruleset update failed${cloudflareErrorStatus(error)}${cloudflareErrorCodes(error)}. Confirm the token has WAF: Edit permission for this Zone and that the preserved rules satisfy Cloudflare's current phase limits.`)
   }
 
   await verifyOpenApiWaf(api, target, verificationSecret)
+}
+
+function isConfiguredOpenApiWaf(rules: WafRule[], expectedRules: WafRuleUpdate[]) {
+  if (rules[0]?.ref !== OPENAPI_WAF_VERIFY_RULE_REF || rules[1]?.ref !== OPENAPI_WAF_RULE_REF) return false
+  return expectedRules.every(expected => {
+    const matchingRules = rules.filter(rule => rule.ref === expected.ref)
+    return matchingRules.length === 1 && isExpectedSkipRule(matchingRules[0], expected)
+  })
 }
 
 function sameStringSet(value: unknown, expected: readonly string[]) {

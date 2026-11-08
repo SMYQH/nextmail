@@ -113,9 +113,39 @@ test("WAF configuration upserts project rules first, preserves unrelated rules, 
 
   await configureOpenApiWaf(api, { hostname, zoneId }, secret)
 
-  assert.equal(updates.length, 2)
+  assert.equal(updates.length, 1)
   assert.equal(entryPoint.rules?.length, 4)
   await verifyOpenApiWaf(api, { hostname, zoneId }, secret)
+})
+
+test("WAF deployment does not rewrite an already valid entrypoint when unrelated rules exceed Cloudflare's phase limit", async () => {
+  const managedRules = createOpenApiWafRules(hostname, secret).map(rule => ({
+    ...rule,
+    id: `${rule.ref}-id`,
+    last_updated: "2026-01-01T00:00:00Z",
+    version: "3",
+  }))
+  const unrelatedRules = Array.from({ length: 6 }, (_, index) => ({
+    id: `operator-rule-${index}`,
+    ref: `operator-rule-${index}`,
+    action: "block" as const,
+    enabled: true,
+    expression: `http.host eq "operator-${index}.example.invalid"`,
+    last_updated: "2026-01-01T00:00:00Z",
+    version: "3",
+  }))
+  let updateCalls = 0
+  const api: WafEntryPointApi = {
+    getEntryPoint: async () => ({ rules: [...managedRules, ...unrelatedRules] }),
+    updateEntryPoint: async () => {
+      updateCalls++
+      throw new Error("the entrypoint must not be rewritten")
+    },
+  }
+
+  await configureOpenApiWaf(api, { hostname, zoneId }, secret)
+
+  assert.equal(updateCalls, 0)
 })
 
 test("WAF verification rejects a rule that starts skipping rate limiting", async () => {
