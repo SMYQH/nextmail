@@ -10,7 +10,7 @@
 
 ## 预览
 
-[![NextMail 界面预览](public/preview.png)]
+![NextMail 界面预览](public/preview.png)
 
 ## 核心特性改进
 
