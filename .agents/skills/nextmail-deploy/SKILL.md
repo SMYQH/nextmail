@@ -5,7 +5,7 @@ description: Use when preparing or executing a deployment of this repository to 
 
 # NextMail deployment
 
-Use this skill only from the NextMail repository root. Start with `git status --short`, then read `docs/deploy.md`, `docs/develop.md`, `.github/workflows/deploy.yml`, `.env.deploy.example`, and the deploy scripts named by those docs. Treat the repository docs and current scripts as authoritative; deployment behavior can change.
+Use this skill only from the NextMail repository root. Start with `git status --short`, initialize the docs submodule with `git submodule update --init docs` if needed, then read `docs/docs/developers/deployment.md`, `docs/docs/developers/local-development.md`, `.github/workflows/deploy.yml`, `.env.deploy.example`, and the deploy scripts named by those docs. Treat the pinned docs submodule and current scripts as authoritative; deployment behavior can change.
 
 ## Authorization and scope
 
@@ -28,7 +28,7 @@ Use this skill only from the NextMail repository root. Start with `git status --
 
 - Build OpenNext on Linux or WSL with Node.js 24+ and a clean `npm ci`; do not reuse Windows `node_modules` for the Worker build.
 - For a release, follow the repository validation sequence: `npm run lint`, `npx tsc --noEmit`, `npm test`, and `npm run build:worker`. GitHub Actions runs these checks before `npm run deploy`. The deploy script also performs Cloudflare read-only preflight checks and a Worker build/package dry run before its remote writes; passing preflight does not guarantee later write permissions.
-- Read the migration cautions in `docs/deploy.md` before changing a production schema. A recorded successful application of `0007_careless_sentinel` is normal and is not by itself a reason to stop. If there is evidence that legacy credentials were lost or expected accounts were not migrated, pause and establish the recovery plan before publishing.
+- Read the migration cautions in `docs/docs/developers/deployment.md` before changing a production schema. A recorded successful application of `0007_careless_sentinel` is normal and is not by itself a reason to stop. If there is evidence that legacy credentials were lost or expected accounts were not migrated, pause and establish the recovery plan before publishing.
 - Stop before remote writes if validation fails, the token/resource checks fail, the email domain resolves to a different Zone, an enabled Webhook would be blocked, or the configured target does not match the user's authorization. Diagnose the specific issue; do not broaden token permissions speculatively.
 
 ## Deploy and verify

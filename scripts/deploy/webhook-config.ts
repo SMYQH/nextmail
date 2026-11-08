@@ -10,6 +10,6 @@ export function assertWebhookDeployment(urls: string[], allowedHosts: string) {
     }
   }
   if (blocked.size) {
-    throw new Error(`Enabled webhooks would stop delivering: ${[...blocked].join(", ")}. Configure WEBHOOK_ALLOWED_HOSTS with operator-approved public hostnames in .env.deploy or Actions secrets, or disable those webhooks before deploying. See docs/deploy.md#webhook-setup. No hosts are trusted automatically.`)
+    throw new Error(`Enabled webhooks would stop delivering: ${[...blocked].join(", ")}. Configure WEBHOOK_ALLOWED_HOSTS with operator-approved public hostnames in .env.deploy or Actions secrets, or disable those webhooks before deploying. See https://docs.nextmail.app/en/developers/deployment#webhook-allowlist. No hosts are trusted automatically.`)
   }
 }

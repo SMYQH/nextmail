@@ -2,7 +2,7 @@ import { hash, compare } from "bcryptjs"
 
 // Password authentication requires Workers Paid (Standard usage model).
 // Async bcrypt still consumes CPU beyond the Free plan's 10 ms request budget.
-// See docs/deploy.md; keep the work factor rather than weakening password storage.
+// See https://docs.nextmail.app/en/developers/deployment#runtime-requirements; keep the work factor rather than weakening password storage.
 const COST = 10
 
 // Prehash avoids bcrypt's 72-byte truncation, including for Unicode passwords.

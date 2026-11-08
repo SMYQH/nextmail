@@ -9,12 +9,12 @@
 ## Communication and Documentation
 
 - Communicate with users **in English**, even for Chinese requests.
-- Write `docs/*.md` in Chinese, except `docs/review.md` in English. Maintain English and Simplified Chinese UI translations in `./app/i18n/messages`.
+- Application documentation is maintained in the `docs` Git submodule. If it is absent or empty, run `git submodule update --init docs`. Follow `docs/AGENTS.md` and update English source and its Simplified Chinese translation together. Maintain UI translations in `./app/i18n/messages`.
 - Use relative document paths (for example, `./package.json`).
 - Write commit subjects and PR titles/descriptions in Chinese, with conventional prefixes (for example, `fix: 修复邮箱权限检查`).
-- Read `docs/develop.md` for development, `docs/deploy.md` for deployment, and `docs/usage.md` for product behavior. Verify commands in `package.json` and CI in `.github/workflows/deploy.yml`.
+- Read `docs/docs/developers/local-development.md` for development, `docs/docs/developers/deployment.md` for deployment, and the relevant pages under `docs/docs/getting-started/` or `docs/docs/guides/` for product behavior. Verify commands in `package.json` and CI in `.github/workflows/deploy.yml`.
 
-### Review ledger: `docs/review.md`
+### Review ledger: `REVIEW.md`
 
 - Read before bug reviews or fixes. Respect recorded user decisions and deferred items. Never restore removed content, weaken/remove user annotations, or claim unverified fixes.
 - Keep this English file the **only authoritative ledger**: one table, one row per finding, IDs descending (newest first). Assign increasing IDs; never renumber or reuse them.
@@ -45,7 +45,7 @@ NextMail: Next.js 16 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 - `drizzle/`: SQL migrations. `scripts/`: migration, deployment, fixture, webhook, icon tools.
 - `wrangler*.example.json`: tracked Worker binding templates; the generated `wrangler*.json` files stay ignored.
 - `tests/`: Node unit/route tests. `tests/helpers/database.ts`: in-memory SQLite/D1 adapter.
-- `public/`: assets, icons, service worker. `docs/`: project documentation.
+- `public/`: assets, icons, service worker. `docs/`: documentation-site Git submodule.
 
 ## Setup and Commands
 
@@ -65,7 +65,7 @@ NextMail: Next.js 16 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 | `npm run dev:cleanup`         | Cleanup Worker with scheduled testing enabled                |
 | `npm run test:cleanup`        | Invoke local scheduled endpoint; cleanup Worker must be running |
 | `npm run webhook-test-server` | Local webhook receiver                                       |
-| `npm run generate-test-data`  | Fixture Worker; invocation URL in `docs/develop.md`          |
+| `npm run generate-test-data`  | Fixture Worker; invocation URL in `docs/docs/developers/local-development.md` |
 | `npm run generate:icons`      | Regenerate app icons                                         |
 | `npm run delete`              | Delete this project's named Cloudflare resources; D1 data is removed |
 | `npm run config:wrangler`     | Generate the ignored local Wrangler configs from the tracked templates |
@@ -101,7 +101,7 @@ NextMail: Next.js 16 App Router, React 19, TypeScript, OpenNext on Cloudflare Wo
 node --import tsx --experimental-test-module-mocks --test tests/routes.test.ts tests/cleanup.test.ts
 ```
 
-- For DB tests, reuse `tests/helpers/database.ts`; use existing external-service mocks. Assert visible behavior and side effects, including persisted data and external call counts. Restore mocks and close test DBs. See `docs/develop.md` for coverage and concurrency limits.
+- For DB tests, reuse `tests/helpers/database.ts`; use existing external-service mocks. Assert visible behavior and side effects, including persisted data and external call counts. Restore mocks and close test DBs. See `docs/docs/developers/local-development.md` for coverage and concurrency limits.
 - Add focused regression tests or reproducible manual steps, especially for auth, permissions, API routes, DB operations, and Workers.
 - Run `npm run test:browser` for the bundled-Chromium browser suite. Check affected UI in both locales, themes, mobile/short viewports, and keyboard/reduced-motion modes as relevant.
 - For UI edits, open affected pages, capture and inspect screenshots after transitions settle, and include screenshots in handoff. Build success or a running browser alone does not verify UI.
@@ -125,7 +125,7 @@ Cloudflare deploy API token: scope permissions to the **NextMail Cloudflare acco
 - Email routing: `Zone: Read`, `Email Routing Rules: Edit`, scoped to the `EMAIL_DOMAIN` zone.
 - Not required: `Cloudflare Pages: Edit`, `Zone Settings: Read/Edit`, `DNS: Edit`, `API Tokens: Edit`, `Email Routing Addresses: Edit`.
 - Custom-domain deployment also manages project WAF rules: `WAF: Edit` and `Bot Management: Read` are required for the website Zone; standard Bot Fight Mode must be disabled.
-- Chinese deployment instructions: `docs/deploy.md`.
+- Chinese deployment instructions: <https://docs.nextmail.app/zh-CN/developers/deployment>.
 
 <!-- BEGIN:nextjs-agent-rules -->
 

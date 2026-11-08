@@ -3,10 +3,10 @@
   <h1 align="center">NextMail</h1>
 </p>
 
-## 使用文档
-**原 MoeMail 仓库完整文档**: [https://docs.moemail.app](https://docs.moemail.app)
+## 官方文档
+[入门指南](https://docs.nextmail.app/zh-CN/getting-started/overview) | [快速部署](https://docs.nextmail.app/zh-CN/getting-started/quick-deploy) | [本地开发](https://docs.nextmail.app/zh-CN/developers/local-development) | [部署与运维](https://docs.nextmail.app/zh-CN/developers/deployment)
 
-当前仓库文档：[使用](docs/usage.md) | [开发](docs/develop.md) | [部署](docs/deploy.md) | [审查](docs/review.md)
+文档源文件以 Git 子模块形式位于 `docs/`。克隆应用仓库后，可运行 `git submodule update --init docs` 检出文档站源码。
 
 ## 预览
 
@@ -35,7 +35,7 @@
 - **ORM**: [Drizzle ORM](https://orm.drizzle.team/)
 - **国际化**: [next-intl](https://next-intl-docs.vercel.app/) 支持多语言，当前仅对 中文/英文 进行适配
 
-> 开发和部署统一使用被忽略的 `.env.deploy`，从 `.env.deploy.example` 复制后填写必填项即可。示例后半部分提供网站、Turnstile、Resend、Catch-all 和账号初始化等可选项。详见[部署说明](docs/deploy.md)。
+> 开发和部署统一使用被忽略的 `.env.deploy`，从 `.env.deploy.example` 复制后填写必填项即可。示例后半部分提供网站、Turnstile、Resend、Catch-all 和账号初始化等可选项。详见[部署与运维](https://docs.nextmail.app/zh-CN/developers/deployment)。
 
 ## 鸣谢
 

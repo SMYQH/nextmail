@@ -341,7 +341,7 @@ export const main = async () => {
       async () => {
         const id = await checkAndCreateDatabase();
         assertWebhookDeployment(await getEnabledWebhookUrls(id), process.env.WEBHOOK_ALLOWED_HOSTS || '');
-        if (!process.env.WEBHOOK_ALLOWED_HOSTS?.trim()) console.log("ℹ️ Webhooks require WEBHOOK_ALLOWED_HOSTS; see docs/deploy.md#webhook-setup. No enabled webhooks are affected.");
+        if (!process.env.WEBHOOK_ALLOWED_HOSTS?.trim()) console.log("ℹ️ Webhooks require WEBHOOK_ALLOWED_HOSTS; see https://docs.nextmail.app/en/developers/deployment#webhook-allowlist. No enabled webhooks are affected.");
         if (openApiWafTarget && openApiWafVerifySecret) {
           await configureOpenApiWaf(openApiWafTarget, openApiWafVerifySecret);
         }
