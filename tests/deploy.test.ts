@@ -51,11 +51,22 @@ test("deployment loads only .env.deploy before initializing Cloudflare and respe
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   writeFileSync(join(directory, ".env.deploy"), "CLOUDFLARE_API_TOKEN=synthetic-token\nAUTH_SECRET=deploy-secret\nEMAIL_DOMAIN=example.com")
   const env = { ...process.env }
-  for (const name of ["CLOUDFLARE_API_TOKEN", "AUTH_SECRET", "EMAIL_DOMAIN"]) delete env[name]
+  for (const name of ["CLOUDFLARE_API_TOKEN", "AUTH_SECRET", "EMAIL_DOMAIN", "GITHUB_ACTIONS"]) delete env[name]
   const cloudflare = resolve("scripts/deploy/cloudflare.ts")
   const script = `const assert = require('node:assert/strict'); require(${JSON.stringify(cloudflare)}); assert.equal(process.env.CLOUDFLARE_API_TOKEN, 'synthetic-token'); assert.equal(process.env.EMAIL_DOMAIN, 'example.com'); assert.equal(process.env.AUTH_SECRET, process.env.CI_TEST_AUTH || 'deploy-secret')`
   execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), "-e", script], { cwd: directory, env })
   execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), "-e", script], { cwd: directory, env: { ...env, AUTH_SECRET: "ci-secret", CI_TEST_AUTH: "ci-secret" } })
+})
+
+test("deployment never falls back to the local environment file in CI", t => {
+  const directory = mkdtempSync(join(tmpdir(), "nextmail-deploy-ci-env-"))
+  t.after(() => rmSync(directory, { recursive: true, force: true }))
+  writeFileSync(join(directory, ".env.deploy"), "CLOUDFLARE_API_TOKEN=synthetic-token\nAUTH_SECRET=deploy-secret\nEMAIL_DOMAIN=example.com")
+  const env: NodeJS.ProcessEnv = { ...process.env, GITHUB_ACTIONS: "true" }
+  for (const name of ["CLOUDFLARE_API_TOKEN", "AUTH_SECRET", "EMAIL_DOMAIN"]) delete env[name]
+  const cloudflare = resolve("scripts/deploy/cloudflare.ts")
+  const script = `const assert = require('node:assert/strict'); require(${JSON.stringify(cloudflare)}); assert.equal(process.env.CLOUDFLARE_API_TOKEN, undefined); assert.equal(process.env.EMAIL_DOMAIN, undefined); assert.equal(process.env.AUTH_SECRET, 'ci-secret')`
+  execFileSync(process.execPath, ["--import", import.meta.resolve("tsx"), "-e", script], { cwd: directory, env: { ...env, AUTH_SECRET: "ci-secret" } })
 })
 
 test("deployment requires the OpenNext worker artifact and matching Wrangler bindings", t => {

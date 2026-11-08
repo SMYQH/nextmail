@@ -4,6 +4,7 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 177 | The deploy environment test inherits the CI runner flag and fails in GitHub Actions. | Resolved locally. |
 | 176 | Deploy rewrites an already valid WAF entrypoint and hits Cloudflare's current phase rule limit. | Resolved locally. |
 | 175 | Review ledger rows record implementation details and verification narratives. | Resolved locally. |
 | 174 | Canonical and Open Graph links fall back to the request host. | Resolved locally; production deployment unverified. |
