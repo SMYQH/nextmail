@@ -3,10 +3,9 @@
   <h1 align="center">NextMail</h1>
 </p>
 
-## 官方文档
 [入门指南](https://docs.nextmail.app/zh-CN/getting-started/overview) | [快速部署](https://docs.nextmail.app/zh-CN/getting-started/quick-deploy) | [本地开发](https://docs.nextmail.app/zh-CN/developers/local-development) | [部署与运维](https://docs.nextmail.app/zh-CN/developers/deployment)
 
-文档源文件以 Git 子模块形式位于 `docs/`。克隆应用仓库后，可运行 `git submodule update --init docs` 检出文档站源码。
+> 文档源文件以 Git 子模块形式位于 `docs/`。
 
 ## 预览
 
