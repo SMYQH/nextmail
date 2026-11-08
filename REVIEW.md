@@ -4,15 +4,16 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 178 | The deployed Worker returns HTTP 500 for every page. | Resolved. |
 | 177 | The deploy environment test inherits the CI runner flag and fails in GitHub Actions. | Resolved locally. |
-| 176 | Deploy rewrites an already valid WAF entrypoint and hits Cloudflare's current phase rule limit. | Resolved locally. |
+| 176 | Deploy rewrites an already valid WAF entrypoint and hits Cloudflare's current phase rule limit. | Resolved. |
 | 175 | Review ledger rows record implementation details and verification narratives. | Resolved locally. |
-| 174 | Canonical and Open Graph links fall back to the request host. | Resolved locally; production deployment unverified. |
+| 174 | Canonical and Open Graph links fall back to the request host. | Resolved. |
 | 173 | The shared editor debug configuration used invalid schema keys and a misplaced compound. | Resolved locally. |
 | 172 | Tracked Wrangler configs publish deployment resource IDs. | Resolved locally; the remote still needs a force-push. |
 | 171 | The framework release deprecates the `middleware` file convention. | Resolved locally. |
 | 170 | Cold sign-ins can fail with CSRF errors. | Resolved locally. |
-| 169 | The framework release blocks supported OpenNext builds. | Resolved locally; live deployment remains unverified. |
+| 169 | The framework release blocks supported OpenNext builds. | Resolved. |
 | 168 | Turnstile browser tests erase existing local configuration. | Resolved locally. |
 | 167 | Gate and snapshot timeouts leave descendant processes running. | Resolved locally. |
 | 166 | API-key refreshes discard returned changes to already-loaded keys. | Resolved locally. |
