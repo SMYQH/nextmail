@@ -2,7 +2,7 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "nextmail",
   "main": ".open-next/worker.js",
-  "compatibility_date": "2025-04-01",
+  "compatibility_date": "2026-09-01",
   "compatibility_flags": [
     "nodejs_compat",
     "nodejs_compat_populate_process_env",
