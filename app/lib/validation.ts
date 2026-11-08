@@ -1,6 +1,8 @@
 import { z } from "zod"
 
-export const authSchema = z.object({
+// Avoid Zod's generated `shape ?? {}` fallback, which esbuild flags while
+// OpenNext bundles middleware. Callers use only declared fields.
+export const authSchema = z.looseObject({
   username: z.string()
     .min(1, "用户名不能为空")
     .max(20, "用户名不能超过20个字符")
