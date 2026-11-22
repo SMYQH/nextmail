@@ -3,6 +3,7 @@ export const MAILBOX_UPDATE_EVENT = "nextmail:mailbox-update"
 export interface MailboxUpdate {
   emailId: string
   messageId?: string
+  deletedMessageIds?: ReadonlySet<string>
   totalDelta: number
   unreadDelta: number
   read?: boolean

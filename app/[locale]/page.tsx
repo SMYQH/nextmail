@@ -24,7 +24,7 @@ export default async function Home({
         <Header />
         <main className="pt-16">
           <div className="min-h-[calc(100svh-4rem)] flex items-center py-10 sm:py-16">
-            <div className="fluent-stagger w-full max-w-4xl mx-auto space-y-8 sm:space-y-10">
+            <div className="w-full max-w-4xl mx-auto space-y-8 sm:space-y-10">
               <section className="space-y-7 px-2 sm:px-0">
                 <div className="flex items-center gap-5 sm:gap-6">
                   <BrandIcon size={80} className="shrink-0" />

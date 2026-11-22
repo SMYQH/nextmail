@@ -83,7 +83,17 @@
     "deleteConfirm": "Confirm Delete",
     "deleteDescription": "Are you sure you want to delete the message \"{subject}\"? This action cannot be undone.",
     "deleteSuccess": "Message deleted successfully",
-    "deleteFailed": "Failed to delete message"
+    "deleteFailed": "Failed to delete message",
+    "selectMessage": "Select {subject} for deletion",
+    "selectedCount": "{count} selected",
+    "maxSelected": "{count} selected (limit)",
+    "deleteSelected": "Delete selected",
+    "bulkDeleteConfirm": "Delete selected messages?",
+    "bulkDeleteDescription": "{count, plural, one {Permanently delete the selected message and its share links?} other {Permanently delete # selected messages and their share links?}}",
+    "bulkDeleteSuccess": "{count, plural, one {1 message deleted} other {# messages deleted}}",
+    "bulkDeleteFailed": "Could not confirm deletion. Your selection is still saved.",
+    "bulkDeleteUnavailable": "One or more selected messages are unavailable or cannot be deleted. No messages were deleted.",
+    "bulkDeleteSelectionChanged": "Unavailable messages were removed from your selection. No messages were deleted."
   },
   "send": {
     "title": "Send Email",

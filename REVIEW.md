@@ -4,6 +4,9 @@ Newest findings appear first. Each row records only the issue and current dispos
 
 | ID | Issue | Status / resolution |
 | --- | --- | --- |
+| 184 | A failed message deletion leaves keyboard focus outside the confirmation dialog. | Resolved locally. |
+| 183 | Unavailable messages stay selected and block bulk deletion retries. | Resolved locally. |
+| 182 | The homepage entrance animation can replay after the page has loaded. | Resolved locally. |
 | 181 | The Windows worker build intermittently fails while collecting build traces. | Open. |
 | 180 | The Worker keeps an outdated compatibility date. | Open. |
 | 179 | The Worker build reports a nullish-coalescing warning from the bundled credential schema. | Resolved. |

@@ -25,6 +25,7 @@ const siteConfig = await import("../app/api/config/route")
 const generate = await import("../app/api/emails/generate/route")
 const mailboxes = await import("../app/api/emails/route")
 const bulkMailboxes = await import("../app/api/emails/bulk/route")
+const bulkMessages = await import("../app/api/emails/[id]/messages/bulk/route")
 const mailbox = await import("../app/api/emails/[id]/route")
 const rolesUsers = await import("../app/api/roles/users/route")
 const userDomains = await import("../app/api/roles/user-domains/route")
@@ -74,12 +75,123 @@ const bulkDeleteRequest = (ids: unknown) => new Request("https://app.example.com
   headers: { "Content-Type": "application/json" },
   body: JSON.stringify({ ids }),
 })
+const deleteMessages = (ids: unknown, id = "email", type = "received") =>
+  bulkMessages.DELETE(new Request(`https://app.example.com/api/emails/${id}/messages/bulk?type=${type}`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ ids }),
+  }), { params: Promise.resolve({ id }) })
 const params = () => ({ params: Promise.resolve({ id: "email", messageId: "message" }) })
 const sendParams = (id = "email") => ({ params: Promise.resolve({ id }) })
 const sendRequest = (body: unknown = { to: "a@example.com", subject: "Subject", content: "<p>Hello</p>" }) =>
   new Request(request(), { method: "POST", body: JSON.stringify(body) })
 const usedQuota = () => sqlite.prepare("SELECT COALESCE(SUM(used), 0) AS n FROM send_usage").get()?.n
 const sentCount = () => sqlite.prepare("SELECT COUNT(*) AS n FROM message WHERE type = 'sent'").get()?.n
+
+test("bulk message deletion validates the whole selection and owning mailbox", async () => {
+  const addEmail = sqlite.prepare("INSERT INTO email(id,address,userId,created_at,expires_at) VALUES(?,?,?,0,?)")
+  addEmail.run("other", "other@example.com", "owner", Date.now() + 60_000)
+  addEmail.run("foreign", "foreign@example.com", "victim", Date.now() + 60_000)
+  sqlite.exec(`
+    INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES
+      ('other-message','other','Other','',100,200,'received'),
+      ('foreign-message','foreign','Foreign','',100,200,'received'),
+      ('sent','email','Sent','',100,200,'sent')
+  `)
+
+  sessionId = undefined
+  assert.equal((await deleteMessages(["message"])).status, 401)
+  sessionId = "owner"
+  for (const ids of [[], ["message", "message"], [1], ["x".repeat(129)], Array.from({ length: 41 }, (_, n) => String(n))]) {
+    assert.equal((await deleteMessages(ids)).status, 400)
+  }
+  assert.equal((await deleteMessages(["message"], "email", "invalid")).status, 400)
+  for (const id of ["missing", "other-message", "foreign-message", "sent"]) {
+    const response = await deleteMessages(["message", id])
+    assert.equal(response.status, 403)
+    assert.deepEqual((await response.json() as { unavailableIds?: string[] }).unavailableIds, [id])
+  }
+  const allMissing = await deleteMessages(["missing", "also-missing"])
+  assert.equal(allMissing.status, 403)
+  assert.deepEqual((await allMissing.json() as { unavailableIds?: string[] }).unavailableIds, ["missing", "also-missing"])
+  const foreignMailbox = await deleteMessages(["foreign-message"], "foreign")
+  assert.equal(foreignMailbox.status, 403)
+  assert.equal((await foreignMailbox.json() as { unavailableIds?: string[] }).unavailableIds, undefined)
+  sqlite.exec("UPDATE email SET expires_at=0 WHERE id='email'")
+  assert.equal((await deleteMessages(["message"])).status, 403)
+  assert.deepEqual(
+    sqlite.prepare("SELECT id FROM message ORDER BY id").all().map(row => row.id),
+    ["foreign-message", "message", "other-message", "sent"],
+  )
+})
+
+test("bulk message deletion supports 40 IDs and returns fresh inbox counts", async t => {
+  const insert = sqlite.prepare("INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type,is_read) VALUES(?,'email','Fixture','',100,200,?,?)")
+  const ids = ["message"]
+  for (let i = 0; i < 39; i++) {
+    const id = `message-${i}`
+    insert.run(id, i === 0 ? null : "received", i % 2)
+    ids.push(id)
+  }
+  insert.run("unread", "received", 0)
+  insert.run("read", "received", 1)
+  insert.run("sent", "sent", 0)
+  sqlite.exec("INSERT INTO message_share(id,message_id,token,created_at) VALUES('remove','message','remove-token',0),('keep','unread','keep-token',0)")
+
+  const prepare = d1.prepare.bind(d1)
+  t.mock.method(d1, "prepare", (query: string) => {
+    assert.ok((query.match(/\?/g) ?? []).length <= 100)
+    return prepare(query)
+  })
+
+  const response = await deleteMessages(ids)
+  assert.equal(response.status, 200)
+  const result = await response.json() as { success: boolean; deletedIds: string[]; total: number; unread: number }
+  assert.equal(result.success, true)
+  assert.deepEqual(new Set(result.deletedIds), new Set(ids))
+  assert.equal(result.total, 2)
+  assert.equal(result.unread, 1)
+  assert.deepEqual(sqlite.prepare("SELECT id FROM message_share").all().map(row => row.id), ["keep"])
+  assert.deepEqual(sqlite.prepare("SELECT message_id FROM message_arrival ORDER BY message_id").all().map(row => row.message_id), ["read", "sent", "unread"])
+
+  assert.equal((await deleteMessages(["message", "unread"])).status, 403)
+  assert.ok(sqlite.prepare("SELECT id FROM message WHERE id='unread'").get())
+})
+
+test("bulk sent deletion enforces send access and preserves daily usage", async () => {
+  sqlite.exec(`
+    INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES
+      ('sent-a','email','Sent A','',100,200,'sent'),('sent-b','email','Sent B','',100,200,'sent');
+    INSERT INTO send_usage(user_id,day,used) VALUES('owner','2026-11-22',2)
+  `)
+  config.set("EMAIL_SERVICE_ENABLED", "false")
+  assert.equal((await deleteMessages(["sent-a", "sent-b"], "email", "sent")).status, 403)
+  config.set("EMAIL_SERVICE_ENABLED", "true")
+  assert.equal((await deleteMessages(["sent-a", "message"], "email", "sent")).status, 403)
+  assert.equal(sentCount(), 2)
+  const response = await deleteMessages(["sent-a", "sent-b"], "email", "sent")
+  assert.equal(response.status, 200)
+  const result = await response.json() as { deletedIds: string[]; total: number }
+  assert.deepEqual(result.deletedIds.sort(), ["sent-a", "sent-b"])
+  assert.equal(result.total, 0)
+  assert.equal(sentCount(), 0)
+  assert.equal(usedQuota(), 2)
+  assert.ok(sqlite.prepare("SELECT id FROM message WHERE id='message'").get())
+})
+
+test("a failed bulk message delete leaves messages and shares intact", async t => {
+  sqlite.exec(`
+    INSERT INTO message(id,emailId,subject,content,received_at,sent_at,type) VALUES('second','email','Second','',100,200,'received');
+    INSERT INTO message_share(id,message_id,token,created_at) VALUES('share','message','token',0);
+    CREATE TEMP TRIGGER reject_delete BEFORE DELETE ON message WHEN OLD.id='second'
+    BEGIN SELECT RAISE(ABORT, 'Synthetic deletion failure'); END;
+  `)
+  t.after(() => sqlite.exec("DROP TRIGGER reject_delete"))
+  t.mock.method(console, "error", () => {})
+  assert.equal((await deleteMessages(["message", "second"])).status, 500)
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM message").get()?.n, 2)
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM message_share").get()?.n, 1)
+})
 
 function createAsyncBarrier(participants: number) {
   let arrivals = 0

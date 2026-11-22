@@ -416,13 +416,6 @@
     animation: fluent-content-in var(--duration-content) var(--fluent-ease-out) both;
   }
 
-  .fluent-stagger > * {
-    animation: fluent-content-in var(--duration-content) var(--fluent-ease-out) both;
-  }
-
-  .fluent-stagger > :nth-child(2) { animation-delay: 60ms; }
-  .fluent-stagger > :nth-child(3) { animation-delay: 110ms; }
-
   @keyframes fluent-content-in {
     from {
       opacity: 0;
@@ -498,7 +491,7 @@
   animation: none;
   transition: none;
 }
-:root[data-input-modality="keyboard"] :is(.fluent-page-enter, .fluent-view-enter, .fluent-stagger > *) {
+:root[data-input-modality="keyboard"] :is(.fluent-page-enter, .fluent-view-enter) {
   animation: none;
 }
 :root[data-input-modality="keyboard"] .fluent-tab::after {
@@ -523,7 +516,7 @@
   .fluent-list-item, .fluent-list-item::before, .fluent-hero-card, .fluent-field, .fluent-tab::after {
     transition: none;
   }
-  .fluent-page-enter, .fluent-view-enter, .fluent-stagger > * {
+  .fluent-page-enter, .fluent-view-enter {
     animation: none;
   }
   .fluent-button:active:not(:disabled) {

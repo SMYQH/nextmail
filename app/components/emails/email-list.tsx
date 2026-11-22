@@ -31,6 +31,7 @@ import { mergeRefreshedMessages } from "@/lib/message-list-refresh"
 import { MAILBOX_UPDATE_EVENT, mailboxSnapshots, type MailboxUpdate } from "@/lib/mailbox-events"
 import { LatestRequestGate } from "@/lib/latest-request-gate"
 import { EmptyState } from "@/components/ui/empty-state"
+import { MAX_BULK_DELETE_IDS } from "@/lib/bulk-delete-ids"
 
 interface Email {
   id: string
@@ -57,8 +58,6 @@ interface EmailListScope {
   userId: string | undefined
   domain: string
 }
-
-const MAX_SELECTED_EMAILS = 40
 
 export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
   const { data: session } = useSession()
@@ -338,7 +337,7 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border/70 px-3 py-2">
             <span className="text-xs text-muted-foreground" role="status" aria-live="polite">
               {t("selectedCount", { count: selectedEmailIds.size })}
-              {selectedEmailIds.size === MAX_SELECTED_EMAILS && ` · ${t("maxSelected")}`}
+              {selectedEmailIds.size === MAX_BULK_DELETE_IDS && ` · ${t("maxSelected")}`}
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -383,27 +382,23 @@ export function EmailList({ onEmailSelect, selectedEmailId }: EmailListProps) {
                   )}
                 >
                   {!email.isCatchAll && (
-                    <div className="relative flex shrink-0 items-center">
-                      <Checkbox
-                        id={`mailbox-select-${email.id}`}
-                        checked={selectedEmailIds.has(email.id)}
-                        onChange={checked => setSelectedEmailIds(current => {
-                          if (checked) {
-                            if (current.has(email.id) || current.size >= MAX_SELECTED_EMAILS) return current
-                            return new Set(current).add(email.id)
-                          }
-                          if (!current.has(email.id)) return current
-                          const next = new Set(current)
-                          next.delete(email.id)
-                          return next
-                        })}
-                        disabled={bulkDeleting || (!selectedEmailIds.has(email.id) && selectedEmailIds.size >= MAX_SELECTED_EMAILS)}
-                        className="h-8 w-8 rounded-[3px]"
-                      />
-                      <label htmlFor={`mailbox-select-${email.id}`} className="sr-only">
-                        {t("selectMailbox", { email: email.address })}
-                      </label>
-                    </div>
+                    <Checkbox
+                      compact
+                      id={`mailbox-select-${email.id}`}
+                      aria-label={t("selectMailbox", { email: email.address })}
+                      checked={selectedEmailIds.has(email.id)}
+                      onChange={checked => setSelectedEmailIds(current => {
+                        if (checked) {
+                          if (current.has(email.id) || current.size >= MAX_BULK_DELETE_IDS) return current
+                          return new Set(current).add(email.id)
+                        }
+                        if (!current.has(email.id)) return current
+                        const next = new Set(current)
+                        next.delete(email.id)
+                        return next
+                      })}
+                      disabled={bulkDeleting || (!selectedEmailIds.has(email.id) && selectedEmailIds.size >= MAX_BULK_DELETE_IDS)}
+                    />
                   )}
                   <button type="button" onClick={() => onEmailSelect(email)}
                     aria-pressed={selectedEmailId === email.id}

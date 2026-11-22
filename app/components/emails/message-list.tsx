@@ -1,18 +1,20 @@
 "use client"
 
-import { useState, useEffect, useEffectEvent, useCallback, useRef } from "react"
+import { useState, useEffect, useEffectEvent, useRef } from "react"
 import { useLocale, useTranslations } from "next-intl"
 import { SharedDateTime } from "./shared-date-time"
 import { EmptyState } from "@/components/ui/empty-state"
-import {Mail, Calendar, RefreshCw, Trash2, Share2} from "lucide-react"
+import { Calendar, RefreshCw, Trash2, Share2, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Checkbox } from "@/components/ui/checkbox"
 import { useThrottle } from "@/hooks/use-throttle"
 import { EMAIL_CONFIG } from "@/config"
 import { useToast } from "@/components/ui/use-toast"
 import { ShareMessageDialog } from "./share-message-dialog"
 import { LatestRequestGate } from "@/lib/latest-request-gate"
 import { mergeRefreshedMessages } from "@/lib/message-list-refresh"
+import { MAX_BULK_DELETE_IDS } from "@/lib/bulk-delete-ids"
 import { MAILBOX_UPDATE_EVENT, mailboxSnapshots, notifyMailboxUpdate, type MailboxUpdate } from "@/lib/mailbox-events"
 import {
   AlertDialog,
@@ -50,6 +52,8 @@ interface MessageListProps {
 
 /** Where the keyboard focus goes after the deleted row left the list. */
 type MessageFocusTarget = { kind: "message"; id: string } | { kind: "refresh" }
+
+type DeleteTarget = { kind: "single"; message: Message } | { kind: "bulk"; ids: string[] }
 
 interface MessageResponse {
   messages: Message[]
@@ -104,7 +108,14 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
   const requestGateRef = useRef(new LatestRequestGate())
   const activeRequestRef = useRef<AbortController | null>(null)
   const [total, setTotal] = useState(0)
-  const [messageToDelete, setMessageToDelete] = useState<Message | null>(null)
+  const [checkedIds, setCheckedIds] = useState<Set<string>>(new Set())
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteError, setDeleteError] = useState("")
+  const [deleting, setDeleting] = useState(false)
+  const deleteInFlightRef = useRef(false)
+  const mountedRef = useRef(false)
+  const deleteButtonRef = useRef<HTMLButtonElement | null>(null)
   const messageButtonRefs = useRef(new Map<string, HTMLButtonElement>())
   const refreshButtonRef = useRef<HTMLButtonElement>(null)
   const restoreFocusRef = useRef<MessageFocusTarget | null>(null)
@@ -120,6 +131,11 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
   const replaceMessages = (nextMessages: Message[]) => {
     messagesRef.current = nextMessages
     setMessages(nextMessages)
+    setCheckedIds(current => {
+      if (current.size === 0) return current
+      const remaining = new Set(nextMessages.filter(message => current.has(message.id)).map(message => message.id))
+      return remaining.size === current.size ? current : remaining
+    })
   }
 
   const replaceNextCursor = (cursor: string | null) => {
@@ -139,7 +155,7 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
     cursor?: string,
     kind: FetchKind = cursor ? "more" : "poll",
   ) => {
-    if (kind === "poll" && (activeRequestRef.current || document.visibilityState === "hidden")) return
+    if (kind === "poll" && (deleteInFlightRef.current || activeRequestRef.current || document.visibilityState === "hidden")) return
 
     const scope = `mailbox:${email.id}:${messageType}`
     const ticket = requestGateRef.current.begin(scope)
@@ -230,7 +246,7 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
   }
 
   const handleScroll = useThrottle((e: React.UIEvent<HTMLDivElement>) => {
-    if (loadingMore || refreshing) return
+    if (loadingMore || refreshing || deleteInFlightRef.current) return
 
     const { scrollHeight, scrollTop, clientHeight } = e.currentTarget
     const threshold = clientHeight * 1.5
@@ -242,63 +258,125 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
     }
   }, 200)
 
-  const handleDelete = async (message: Message) => {
+  const toggleMessage = (id: string, checked: boolean) => {
+    setCheckedIds(current => {
+      if (checked && current.size >= MAX_BULK_DELETE_IDS) return current
+      const next = new Set(current)
+      if (checked) next.add(id)
+      else next.delete(id)
+      return next
+    })
+  }
+
+  const openDeleteDialog = (target: DeleteTarget, button: HTMLButtonElement) => {
+    deleteButtonRef.current = button
+    setDeleteTarget(target)
+    setDeleteError("")
+    setDeleteOpen(true)
+  }
+
+  const handleDelete = async (target: DeleteTarget) => {
+    if (deleteInFlightRef.current) return
+    deleteInFlightRef.current = true
+    setDeleting(true)
+    setDeleteError("")
+
+    const bulk = target.kind === "bulk"
+    const ids = bulk ? target.ids : [target.message.id]
+    const resource = bulk ? "messages/bulk" : encodeURIComponent(target.message.id)
+    const typeQuery = messageType === "sent" ? "?type=sent" : ""
     const snapshot = mailboxSnapshots.snapshot()
     try {
-      const response = await fetch(`/api/emails/${email.id}/${message.id}${messageType === 'sent' ? '?type=sent' : ''}`, {
-        method: "DELETE"
+      const response = await fetch(`/api/emails/${encodeURIComponent(email.id)}/${resource}${typeQuery}`, {
+        method: "DELETE",
+        ...(bulk ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify({ ids }) } : {}),
       })
 
-      if (!response.ok) {
-        const data = await response.json()
-        toast({
-          title: t("deleteFailed"),
-          description: (data as { error: string }).error,
-          variant: "destructive"
-        })
+      const data = await response.json() as {
+        error?: string
+        success?: boolean
+        deletedIds?: unknown
+        unavailableIds?: unknown
+        total?: number
+        unread?: number
+      }
+      const { unavailableIds } = data
+      const staleIds = bulk && response.status === 403 && Array.isArray(unavailableIds)
+        ? ids.filter(id => unavailableIds.includes(id))
+        : []
+      const selectionChanged = staleIds.length > 0
+
+      if (!response.ok && !selectionChanged) {
+        if (bulk) {
+          setDeleteError(t(response.status === 403 ? "bulkDeleteUnavailable" : "bulkDeleteFailed"))
+        } else {
+          toast({ title: t("deleteFailed"), description: data.error, variant: "destructive" })
+        }
         return
       }
 
-      const data = await response.json() as { total?: number; unread?: number }
-      const deletedIndex = messagesRef.current.findIndex(entry => entry.id === message.id)
-      replaceMessages(messagesRef.current.filter(e => e.id !== message.id))
-      // The deleted row takes its controls with it, so the dialog can no longer
-      // restore the focus to the delete button. Remember the neighbour that
-      // takes the place of the removed row.
-      const remaining = messagesRef.current
-      const neighbour = remaining[deletedIndex] ?? remaining[deletedIndex - 1]
-      restoreFocusRef.current = neighbour ? { kind: "message", id: neighbour.id } : { kind: "refresh" }
-      if (messageType === 'sent') {
-        setTotal(prev => Math.max(0, prev - 1))
-      } else if (typeof data.total === "number" && typeof data.unread === "number") {
-        setTotal(data.total)
+      if (bulk && response.ok) {
+        const { deletedIds } = data
+        if (data.success !== true || !Array.isArray(deletedIds) || deletedIds.length !== ids.length ||
+            !ids.every(id => deletedIds.includes(id)) || typeof data.total !== "number" ||
+            (messageType === "received" && typeof data.unread !== "number")) {
+          throw new Error("Invalid bulk message deletion response")
+        }
+      }
+
+      const deletedMessageIds = new Set(selectionChanged ? staleIds : ids)
+      const refreshAfterDelete = mountedRef.current && Boolean(selectionChanged || activeRequestRef.current || nextCursorRef.current)
+      if (mountedRef.current) {
+        requestGateRef.current.invalidate()
+        activeRequestRef.current?.abort()
+        activeRequestRef.current = null
+        setLoadingMore(false)
+        setCompletedRefreshTrigger(latestRefreshTriggerRef.current ?? 0)
+
+        const current = messagesRef.current
+        const deletedIndex = current.findIndex(message => deletedMessageIds.has(message.id))
+        const remaining = current.filter(message => !deletedMessageIds.has(message.id))
+        // The deleted row takes its controls with it, so the dialog can no longer
+        // restore the focus to the delete button. Remember the neighbour that
+        // takes the place of the removed row.
+        const neighbour = remaining[deletedIndex] ?? remaining[deletedIndex - 1]
+        if (!selectionChanged || staleIds.length === ids.length) {
+          restoreFocusRef.current = neighbour ? { kind: "message", id: neighbour.id } : { kind: "refresh" }
+        }
+        replaceMessages(remaining)
+        if (refreshAfterDelete && remaining.length === 0) setLoading(true)
+        if (messageType === "sent" && response.ok) setTotal(prev => data.total ?? Math.max(0, prev - ids.length))
+        if (selectedMessageId && deletedMessageIds.has(selectedMessageId)) onMessageSelect(null)
+        setDeleteOpen(false)
+      }
+
+      if (messageType === "received" && (selectionChanged || (typeof data.total === "number" && typeof data.unread === "number"))) {
         notifyMailboxUpdate({
-          emailId: email.id, messageId: message.id, deleted: true,
+          emailId: email.id, deleted: true, deletedMessageIds,
           totalDelta: 0, unreadDelta: 0, total: data.total, unread: data.unread,
         }, snapshot)
       }
 
-      toast({
-        title: tList("success"),
-        description: t("deleteSuccess")
-      })
+      if (refreshAfterDelete) void fetchMessages(undefined, "refresh")
 
-      if (selectedMessageId === message.id) {
-        onMessageSelect(null)
-      }
-    } catch {
       toast({
-        title: tList("error"),
-        description: t("deleteFailed"),
-        variant: "destructive"
+        title: tList(selectionChanged ? "error" : "success"),
+        description: selectionChanged ? t("bulkDeleteSelectionChanged") : bulk ? t("bulkDeleteSuccess", { count: ids.length }) : t("deleteSuccess"),
+        variant: selectionChanged ? "destructive" : undefined,
       })
+    } catch {
+      if (bulk) setDeleteError(t("bulkDeleteFailed"))
+      else toast({ title: tList("error"), description: t("deleteFailed"), variant: "destructive" })
     } finally {
-      setMessageToDelete(null)
+      deleteInFlightRef.current = false
+      setDeleting(false)
+      if (!bulk) setDeleteOpen(false)
     }
   }
 
   useEffect(() => {
     if (!email.id) return
+    mountedRef.current = true
     const scope = `mailbox:${email.id}:${messageType}`
     const requestGate = requestGateRef.current
     const ticket = requestGate.begin(scope)
@@ -340,11 +418,12 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
     pollTimeoutRef.current = interval
 
     return () => {
+      mountedRef.current = false
       clearInterval(interval)
       if (pollTimeoutRef.current === interval) pollTimeoutRef.current = null
       requestGate.invalidate()
-      controller.abort()
-      if (activeRequestRef.current === controller) activeRequestRef.current = null
+      activeRequestRef.current?.abort()
+      activeRequestRef.current = null
     }
   }, [email.id, messageType])
 
@@ -396,26 +475,18 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
     }
   }, [email.id, messageType, refreshTrigger])
 
-  const focusDeletedNeighbour = useCallback((target: MessageFocusTarget) => {
-    if (target.kind === "message") {
-      messageButtonRefs.current.get(target.id)?.focus()
-      return
-    }
-    refreshButtonRef.current?.focus()
-  }, [])
-
   // The deleted row takes the focused control with it, so the focus would end
   // up on the document body. Restore it to a row that is still listed.
-  useEffect(() => {
-    const target = restoreFocusRef.current
-    if (!target) return
-    const activeElement = document.activeElement
-    // The confirmation dialog can still hold the focus; it restores the focus
-    // when it closes.
-    if (activeElement && activeElement !== document.body && activeElement.isConnected) return
-    restoreFocusRef.current = null
-    focusDeletedNeighbour(target)
-  }, [messages, focusDeletedNeighbour])
+  const focusDeletedNeighbour = (target: MessageFocusTarget) => {
+    if (target.kind === "message") {
+      const button = messageButtonRefs.current.get(target.id)
+      if (button) {
+        button.focus()
+        return
+      }
+    }
+    refreshButtonRef.current?.focus()
+  }
 
   useEffect(() => {
     const update = (event: Event) => {
@@ -424,32 +495,66 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
       if (typeof detail.total === "number") setTotal(detail.total)
       if (!detail.read && !detail.deleted) return
       replaceMessages(detail.deleted
-        ? messagesRef.current.filter(message => message.id !== detail.messageId)
+        ? messagesRef.current.filter(message => message.id !== detail.messageId && !detail.deletedMessageIds?.has(message.id))
         : messagesRef.current.map(message => message.id === detail.messageId ? { ...message, is_read: true } : message))
     }
     window.addEventListener(MAILBOX_UPDATE_EVENT, update)
     return () => window.removeEventListener(MAILBOX_UPDATE_EVENT, update)
   }, [email.id, messageType])
 
+  const selectedCount = checkedIds.size
+  const atSelectionLimit = selectedCount === MAX_BULK_DELETE_IDS
+  const bulkTarget = deleteTarget?.kind === "bulk" ? deleteTarget : null
+
   return (
   <>
     <div className="h-full flex flex-col">
-      <div className="p-2.5 flex justify-between items-center border-b border-border/70 bg-secondary/20">
+      <div className="flex shrink-0 items-center gap-1 border-b border-border/70 bg-secondary/20 p-2.5">
         <Button
           ref={refreshButtonRef}
           variant="ghost"
           size="icon"
           aria-label={tCommon("refresh")}
           onClick={handleRefresh}
-          disabled={refreshing}
-          className="h-8 w-8"
-              aria-busy={refreshing}
+          disabled={refreshing || deleting}
+          className="size-8 shrink-0"
+          aria-busy={refreshing}
         >
           <RefreshCw className={cn("h-4 w-4", refreshing && "animate-spin")} />
         </Button>
-        <span className="text-xs text-muted-foreground">
-          {total > 0 ? `${total} ${t("messageCount")}` : t("noMessages")}
+        <span role="status" className={cn("min-w-0 flex-1 px-1 text-xs text-muted-foreground", selectedCount === 0 && "text-right")}>
+          {selectedCount > 0
+            ? (atSelectionLimit ? t("maxSelected", { count: selectedCount }) : t("selectedCount", { count: selectedCount }))
+            : (total > 0 ? `${total} ${t("messageCount")}` : t("noMessages"))}
         </span>
+        {selectedCount > 0 && (
+          <>
+            <Button
+              variant="destructive"
+              size="sm"
+              className="h-8 shrink-0 gap-1.5 px-2"
+              disabled={deleting}
+              onClick={event => openDeleteDialog({ kind: "bulk", ids: [...checkedIds] }, event.currentTarget)}
+            >
+              <Trash2 aria-hidden="true" className="size-4" />
+              {t("deleteSelected")}
+            </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="size-8 shrink-0"
+              aria-label={tList("clearSelection")}
+              title={tList("clearSelection")}
+              disabled={deleting}
+              onClick={() => {
+                refreshButtonRef.current?.focus()
+                setCheckedIds(new Set())
+              }}
+            >
+              <X aria-hidden="true" className="size-4" />
+            </Button>
+          </>
+        )}
       </div>
 
       <div className="flex-1 overflow-auto" onScroll={handleScroll}>
@@ -465,15 +570,21 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
                   selectedMessageId === message.id && "is-selected"
                 )}
               >
-                <div className="flex items-start gap-3">
+                <div className="flex items-start gap-1.5">
+                  <Checkbox
+                    compact
+                    aria-label={t("selectMessage", { subject: message.subject })}
+                    checked={checkedIds.has(message.id)}
+                    disabled={deleting || (atSelectionLimit && !checkedIds.has(message.id))}
+                    onChange={checked => toggleMessage(message.id, checked)}
+                  />
                   <button type="button" onClick={() => onMessageSelect(message.id, messageType, messageType !== 'sent' && !message.is_read)}
                     ref={(element) => {
                       if (element) messageButtonRefs.current.set(message.id, element)
                       else messageButtonRefs.current.delete(message.id)
                     }}
                     aria-pressed={selectedMessageId === message.id}
-                    className="flex flex-1 min-w-0 items-start gap-3 text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-                  <Mail className="w-4 h-4 shrink-0 text-primary/60 mt-1" />
+                    className="flex flex-1 min-w-0 items-start text-left rounded-sm focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
                   <div className="min-w-0 flex-1">
                     <p title={message.subject} className={cn("text-sm truncate", messageType !== 'sent' && !message.is_read ? "font-bold" : "font-normal")}>{message.subject}</p>
                     <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
@@ -508,9 +619,10 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
                       size="icon"
                       className="h-8 w-8"
                       aria-label={tCommon("delete")}
+                      disabled={deleting}
                       onClick={(e) => {
                         e.stopPropagation()
-                        setMessageToDelete(message)
+                        openDeleteDialog({ kind: "single", message }, e.currentTarget)
                       }}
                     >
                       <Trash2 className="h-4 w-4 text-destructive" />
@@ -530,11 +642,22 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
         )}
       </div>
     </div>
-    <AlertDialog open={!!messageToDelete} onOpenChange={() => setMessageToDelete(null)}>
+    <AlertDialog open={deleteOpen} onOpenChange={open => {
+      if (!open && !deleteInFlightRef.current) setDeleteOpen(false)
+    }}>
       <AlertDialogContent
         onCloseAutoFocus={(event) => {
+          // The confirmation dialog can still hold the focus; it restores the focus
+          // when it closes.
           const target = restoreFocusRef.current
-          if (!target) return
+          const button = deleteButtonRef.current
+          deleteButtonRef.current = null
+          if (!target) {
+            event.preventDefault()
+            if (button?.isConnected) button.focus()
+            else refreshButtonRef.current?.focus()
+            return
+          }
           restoreFocusRef.current = null
           // The default restore targets the delete button of the removed row,
           // which would drop the focus on the document body.
@@ -543,18 +666,27 @@ function MessageListSession({ email, messageType, onMessageSelect, selectedMessa
         }}
       >
         <AlertDialogHeader>
-          <AlertDialogTitle>{t("deleteConfirm")}</AlertDialogTitle>
+          <AlertDialogTitle>{t(bulkTarget ? "bulkDeleteConfirm" : "deleteConfirm")}</AlertDialogTitle>
           <AlertDialogDescription>
-            {t("deleteDescription", { subject: messageToDelete?.subject || "" })}
+            {bulkTarget
+              ? t("bulkDeleteDescription", { count: bulkTarget.ids.length })
+              : t("deleteDescription", { subject: deleteTarget?.kind === "single" ? deleteTarget.message.subject : "" })}
           </AlertDialogDescription>
         </AlertDialogHeader>
+        {deleteError && <p role="alert" className="text-sm text-destructive">{deleteError}</p>}
         <AlertDialogFooter>
-          <AlertDialogCancel>{tCommon("cancel")}</AlertDialogCancel>
+          <AlertDialogCancel disabled={deleting}>{tCommon("cancel")}</AlertDialogCancel>
           <AlertDialogAction
-              className="bg-destructive hover:bg-destructive/90"
-              onClick={() => messageToDelete && handleDelete(messageToDelete)}
+            className="bg-destructive hover:bg-destructive/90 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
+            disabled={!deleteTarget}
+            aria-disabled={deleting}
+            aria-busy={deleting}
+            onClick={event => {
+              event.preventDefault()
+              if (deleteTarget) void handleDelete(deleteTarget)
+            }}
           >
-            {tCommon("delete")}
+            {deleting ? tList("bulkDeleting") : tCommon("delete")}
           </AlertDialogAction>
         </AlertDialogFooter>
       </AlertDialogContent>

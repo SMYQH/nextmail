@@ -83,7 +83,17 @@
     "deleteConfirm": "确认删除",
     "deleteDescription": "确定要删除主题为“{subject}”的邮件吗？此操作不可恢复。",
     "deleteSuccess": "邮件已删除",
-    "deleteFailed": "删除邮件失败"
+    "deleteFailed": "删除邮件失败",
+    "selectMessage": "选择要删除的邮件：{subject}",
+    "selectedCount": "已选择 {count} 封",
+    "maxSelected": "已选 {count} 封（上限）",
+    "deleteSelected": "删除所选",
+    "bulkDeleteConfirm": "删除所选邮件？",
+    "bulkDeleteDescription": "确定永久删除所选的 {count} 封邮件及其分享链接吗？",
+    "bulkDeleteSuccess": "已删除 {count} 封邮件",
+    "bulkDeleteFailed": "无法确认删除结果，已保留当前选择。",
+    "bulkDeleteUnavailable": "一封或多封所选邮件已不可用或无法删除。未删除任何邮件。",
+    "bulkDeleteSelectionChanged": "不可用的邮件已从选择中移除。未删除任何邮件。"
   },
   "send": {
     "title": "发送邮件",
